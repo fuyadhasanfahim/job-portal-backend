@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { createUser } from '../controllers/user.controller.js';
+import { getSignedUserController } from '../controllers/user.controller.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 
 const router: Router = Router();
 
-router.post('/create-user', createUser);
+router.get('/get-signed-user', requireAuth, getSignedUserController);
 
 export const userRoute = router;

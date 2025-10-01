@@ -1,51 +1,26 @@
 import type { Request, Response } from 'express';
-import { createUserInDB } from '../services/user.service.js';
+import { getSignedUserService } from '../services/user.service.js';
 
-export async function createUser(req: Request, res: Response) {
+export async function getSignedUserController(req: Request, res: Response) {
     try {
-        const { firstName, lastName, email, phone, password } = req.body;
+        const id = req.auth?.id;
+        console.log(id);
 
-        if (!firstName || !email || !phone || !password) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    'Please provide all required fields (first name, email, phone, and password).',
-            });
+        if (!id) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
         }
 
-        const user = await createUserInDB({
-            firstName,
-            lastName,
-            email,
-            phone,
-            password,
-        });
+        const user = await getSignedUserService(id);
 
-        if (!user) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to create user. Please try again later.',
-            });
-        }
-
-        return res.status(201).json({
+        return res.status(200).json({
             success: true,
-            message: 'Account created successfully. Welcome aboard!',
+            user,
         });
     } catch (error) {
-        if ((error as Error).message.includes('already in use')) {
-            return res.status(400).json({
-                success: false,
-                message:
-                    'This email is already registered. Please log in instead.',
-            });
-        }
-
-        return res.status(500).json({
-            success: false,
-            message:
-                'Something went wrong while creating your account. Please try again later.',
-            error,
-        });
+        return res
+            .status(500)
+            .json({ success: false, message: 'Failed to fetch user', error });
     }
 }
