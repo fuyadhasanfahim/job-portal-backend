@@ -20,20 +20,28 @@ const refreshMs = ms(env.refresh_expires as StringValue);
 
 export async function signupController(req: Request, res: Response) {
     try {
-        const { firstName, lastName, email, phone, password } = req.body;
+        const { firstName, lastName, email, phone, role, password } = req.body;
 
-        if (!firstName || !email || !phone || !password) {
+        if (!firstName || !email || !phone || !password || !role) {
             return res
                 .status(400)
                 .json({ success: false, message: 'Missing required fields.' });
         }
 
-        await signupService({ firstName, lastName, email, phone, password });
+        await signupService({
+            firstName,
+            lastName,
+            email,
+            phone,
+            role,
+            password,
+        });
 
         return res
             .status(201)
             .json({ success: true, message: 'Account created successfully.' });
     } catch (error) {
+        console.log(error);
         if ((error as Error).message === 'EMAIL_EXISTS') {
             return res
                 .status(409)

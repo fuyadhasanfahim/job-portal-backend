@@ -6,9 +6,9 @@ import { requireAuth } from '../middleware/requireAuth.js';
 const router: Router = Router();
 
 router.post(
-    '/import',
+    '/import-leads',
     requireAuth,
-    upload.single('file'),
+    upload.array('files'),
     importLeadsController,
 );
 

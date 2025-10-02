@@ -17,11 +17,12 @@ export async function signupService({
     lastName,
     email,
     phone,
+    role,
     password,
 }: Partial<IUser>) {
-    if (!firstName || !email || !phone || !password) {
+    if (!firstName || !email || !phone || !password || !role) {
         throw new Error(
-            'Missing required fields: firstName, email, phone, or password.',
+            'Missing required fields: firstName, email, phone, role or password.',
         );
     }
 
@@ -42,6 +43,7 @@ export async function signupService({
         lastName: lastName?.trim(),
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
+        role: role.trim(),
         password: hashedPassword,
     });
 

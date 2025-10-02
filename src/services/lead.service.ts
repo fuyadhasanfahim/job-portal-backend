@@ -1,124 +1,200 @@
-import fs from 'fs';
-import csv from 'csv-parser';
-import xlsx from 'xlsx';
 import LeadModel from '../models/lead.model.js';
+import type { ParsedRow } from '../helpers/fileParser.js';
+import { emitImportProgress } from '../lib/socket.js';
+import type { NewLead } from '../types/lead.interface.js';
+import { Types } from 'mongoose';
 
-interface ImportResult {
+export interface ImportResult {
     inserted: number;
-    skipped: number;
+    duplicates: number;
     errors: number;
+    total: number;
 }
 
-export async function importCSV(
-    filePath: string,
-    ownerId: string,
-): Promise<ImportResult> {
-    return new Promise((resolve, reject) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const leadsBatch: any[] = [];
-        let inserted = 0;
-        const skipped = 0;
-        let errors = 0;
-
-        const stream = fs.createReadStream(filePath).pipe(csv());
-
-        stream.on('data', async (row) => {
-            leadsBatch.push({
-                companyName: row.companyName,
-                websiteUrl: row.websiteUrl,
-                email: row.email ? row.email.split(',') : [],
-                address: row.address,
-                contactPerson: {
-                    firstName: row.firstName || '',
-                    lastName: row.lastName || '',
-                },
-                designation: row.designation,
-                phone: row.phone ? row.phone.split(',') : [],
-                country: row.country,
-                notes: row.notes,
-                owner: ownerId,
-            });
-
-            // Insert in chunks of 1000
-            if (leadsBatch.length >= 1000) {
-                try {
-                    const res = await LeadModel.insertMany(leadsBatch, {
-                        ordered: false,
-                    });
-                    inserted += res.length;
-                    leadsBatch.length = 0;
-                } catch {
-                    errors++;
-                }
-            }
-        });
-
-        stream.on('end', async () => {
-            if (leadsBatch.length > 0) {
-                try {
-                    const res = await LeadModel.insertMany(leadsBatch, {
-                        ordered: false,
-                    });
-                    inserted += res.length;
-                } catch {
-                    errors++;
-                }
-            }
-            fs.unlinkSync(filePath); // cleanup temp file
-            resolve({ inserted, skipped, errors });
-        });
-
-        stream.on('error', (err: Error) => reject(err));
-    });
+export interface CreateLeadsOptions {
+    uploadId: string;
+    chunkSize?: number;
 }
 
-export async function importExcel(
-    filePath: string,
-    ownerId: string,
-): Promise<ImportResult> {
-    const workbook = xlsx.readFile(filePath);
-    const firstSheetName =
-        workbook.SheetNames && workbook.SheetNames.length > 0
-            ? workbook.SheetNames[0]
-            : undefined;
-    if (!firstSheetName) {
-        throw new Error('No sheets found in the Excel file.');
-    }
-    const sheet = workbook.Sheets[firstSheetName];
-    if (!sheet) {
-        throw new Error('Sheet not found in the Excel file.');
-    }
-    const rows = xlsx.utils.sheet_to_json(sheet);
+function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
+    return {
+        companyName: String(
+            row['Agency Name'] || row['companyName'] || 'Unknown',
+        ).trim(),
+        websiteUrl:
+            (row['Websites'] as string) || (row['websiteUrl'] as string),
+        emails: [row['Personal Email'], row['Email.'], row['emails']]
+            .filter((e): e is string => Boolean(e))
+            .map((e) => e.trim().toLowerCase()),
+        phones: row['Phone Number'] ? [String(row['Phone Number']).trim()] : [],
+        address: row['address'] as string,
+        contactPerson: {
+            firstName: String(
+                row['First name'] ||
+                    row['contactPerson.firstName'] ||
+                    'Unknown',
+            ).trim(),
+            lastName: String(
+                row['Last Name'] || row['contactPerson.lastName'] || 'Unknown',
+            ).trim(),
+        },
+        designation: row['Position'] as string,
+        country: (row['country'] as string) || 'Unknown',
+        status: 'new',
+        notes: [row['Social'], row['Unnamed: 7'], row['notes']]
+            .filter(Boolean)
+            .join(' '),
+        owner: new Types.ObjectId(ownerId),
+        accessList: [],
+        activities: [],
+    };
+}
 
+export async function createLeadsService(
+    ownerId: string,
+    parsed: ParsedRow[],
+    { uploadId, chunkSize = 500 }: CreateLeadsOptions,
+): Promise<ImportResult> {
+    const total = parsed.length;
+    let processed = 0;
     let inserted = 0;
+    let duplicates = 0;
     let errors = 0;
 
-    for (let i = 0; i < rows.length; i += 1000) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const batch = rows.slice(i, i + 1000).map((row: any) => ({
-            companyName: row.companyName,
-            websiteUrl: row.websiteUrl,
-            email: row.email ? String(row.email).split(',') : [],
-            address: row.address,
-            contactPerson: {
-                firstName: row.firstName || '',
-                lastName: row.lastName || '',
-            },
-            designation: row.designation,
-            phone: row.phone ? String(row.phone).split(',') : [],
-            country: row.country,
-            notes: row.notes,
-            owner: ownerId,
-        }));
+    const candidates: NewLead[] = parsed.map((r) => mapRowToLead(r, ownerId));
 
-        try {
-            const res = await LeadModel.insertMany(batch, { ordered: false });
-            inserted += res.length;
-        } catch {
-            errors++;
-        }
+    emitImportProgress(uploadId, {
+        total,
+        processed,
+        percentage: 0,
+        inserted,
+        duplicates,
+        errors,
+        remaining: total,
+        stage: 'deduping',
+    });
+
+    // dedup keys
+    const allEmails = new Set<string>();
+    const allPhones = new Set<string>();
+    const allCompanies = new Set<string>();
+    for (const c of candidates) {
+        c.emails.forEach((e) => allEmails.add(e));
+        c.phones.forEach((p) => allPhones.add(p));
+        allCompanies.add(c.companyName);
     }
 
-    fs.unlinkSync(filePath);
-    return { inserted, skipped: 0, errors };
+    const existing = await LeadModel.find(
+        {
+            owner: ownerId,
+            $or: [
+                ...(allEmails.size
+                    ? [{ emails: { $in: Array.from(allEmails) } }]
+                    : []),
+                ...(allPhones.size
+                    ? [{ phones: { $in: Array.from(allPhones) } }]
+                    : []),
+                ...(allCompanies.size
+                    ? [{ companyName: { $in: Array.from(allCompanies) } }]
+                    : []),
+            ],
+        },
+        { emails: 1, phones: 1, companyName: 1 },
+    ).lean();
+
+    const existingEmails = new Set<string>();
+    const existingPhones = new Set<string>();
+    const existingCompanies = new Set<string>();
+    for (const ex of existing) {
+        (ex.emails ?? []).forEach((e: string) => existingEmails.add(e));
+        (ex.phones ?? []).forEach((p: string) => existingPhones.add(p));
+        if (ex.companyName) existingCompanies.add(String(ex.companyName));
+    }
+
+    const seenEmails = new Set<string>();
+    const seenPhones = new Set<string>();
+    const seenCompanies = new Set<string>();
+
+    const toInsert: NewLead[] = [];
+    for (const c of candidates) {
+        const isDupCompany =
+            c.companyName &&
+            (existingCompanies.has(c.companyName) ||
+                seenCompanies.has(c.companyName));
+        const isDupEmail = c.emails.some(
+            (e) => existingEmails.has(e) || seenEmails.has(e),
+        );
+        const isDupPhone = c.phones.some(
+            (p) => existingPhones.has(p) || seenPhones.has(p),
+        );
+
+        if (isDupCompany || isDupEmail || isDupPhone) {
+            duplicates++;
+            continue;
+        }
+
+        if (c.companyName) seenCompanies.add(c.companyName);
+        c.emails.forEach((e) => seenEmails.add(e));
+        c.phones.forEach((p) => seenPhones.add(p));
+
+        toInsert.push(c);
+    }
+
+    emitImportProgress(uploadId, {
+        total,
+        processed,
+        percentage: 0,
+        inserted,
+        duplicates,
+        errors,
+        remaining: total,
+        stage: 'inserting',
+    });
+
+    for (let i = 0; i < toInsert.length; i += chunkSize) {
+        const chunk = toInsert.slice(i, i + chunkSize);
+        try {
+            const result = await LeadModel.insertMany(chunk, {
+                ordered: false,
+            });
+            inserted += result.length;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (e: any) {
+            if (e && Array.isArray(e.writeErrors)) {
+                errors += e.writeErrors.length;
+                inserted += chunk.length - e.writeErrors.length;
+            } else {
+                errors += chunk.length;
+            }
+        }
+
+        processed = Math.min(total, processed + chunk.length);
+        const remaining = Math.max(0, total - processed);
+        const percentage =
+            total === 0 ? 100 : Math.round((processed / total) * 100);
+
+        emitImportProgress(uploadId, {
+            total,
+            processed,
+            percentage,
+            inserted,
+            duplicates,
+            errors,
+            remaining,
+            stage: 'inserting',
+        });
+    }
+
+    emitImportProgress(uploadId, {
+        total,
+        processed: total,
+        percentage: 100,
+        inserted,
+        duplicates,
+        errors,
+        remaining: 0,
+        stage: 'done',
+    });
+
+    return { inserted, duplicates, errors, total };
 }

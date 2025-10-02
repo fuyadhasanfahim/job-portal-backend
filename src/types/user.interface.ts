@@ -1,22 +1,31 @@
-import type { Types } from 'mongoose';
+import type { Document, Types } from 'mongoose';
 
-export interface IUser {
+export interface IUser extends Document {
     firstName: string;
-    lastName: string;
+    lastName?: string;
     email: string;
     phone: string;
-    image: string;
-    role: string;
-
+    image?: string;
     password: string;
     resetPasswordToken?: string;
-    resetPasswordExpiry: Date;
+    resetPasswordExpiry?: Date;
 
-    teamId: Types.ObjectId;
+    role:
+        | 'super-admin'
+        | 'admin'
+        | 'telemarketer'
+        | 'digital-marketer'
+        | 'seo-executive'
+        | 'social-media-executive'
+        | 'web-developer'
+        | 'photo-editor'
+        | 'graphic-designer';
 
+    teamId?: Types.ObjectId;
     isActive: boolean;
-    lastLogin: Date;
+    lastLogin?: Date;
 
-    createdAt: Date;
-    updatedAt: Date;
+    emailVerified: boolean;
+    emailVerificationToken?: string;
+    emailVerificationExpiry?: Date;
 }

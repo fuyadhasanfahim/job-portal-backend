@@ -1,37 +1,44 @@
+import crypto from 'crypto';
 import { type Request, type Response } from 'express';
-import { importCSV, importExcel } from '../services/lead.service.js';
+import { parseCSV, parseExcel, type ParsedRow } from '../helpers/fileParser.js';
+import { createLeadsService } from '../services/lead.service.js';
 
 export async function importLeadsController(req: Request, res: Response) {
     try {
-        if (!req.file) {
+        const ownerId = req.auth?.id;
+        if (!ownerId) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+
+        if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
             return res
                 .status(400)
-                .json({ success: false, message: 'No file uploaded' });
+                .json({ success: false, message: 'No files uploaded' });
         }
 
-        const filePath = req.file.path;
-        const mimetype = req.file.mimetype;
+        const uploadId = (req.body?.uploadId as string) || crypto.randomUUID();
 
-        const ownerId = req.auth?.id;
-
-        if (!ownerId) {
-            return res.status(401).json({
-                success: false,
-                message: 'Unauthorized',
-            });
+        let parsed: ParsedRow[] = [];
+        for (const file of req.files) {
+            const mimetype = file.mimetype ?? '';
+            const rows = mimetype.includes('csv')
+                ? await parseCSV(file.path)
+                : await parseExcel(file.path);
+            parsed = parsed.concat(rows);
         }
 
-        let result;
+        const result = await createLeadsService(ownerId, parsed, { uploadId });
 
-        if (mimetype.includes('csv')) {
-            result = await importCSV(filePath, ownerId);
-        } else {
-            result = await importExcel(filePath, ownerId);
-        }
-
-        return res.json({ success: true, ...result });
-    } catch (err) {
-        console.error(err);
+        return res.json({
+            success: true,
+            message: 'Import complete',
+            uploadId,
+            ...result,
+        });
+    } catch (error: unknown) {
+        console.error(error);
         return res
             .status(500)
             .json({ success: false, message: 'Import failed' });
