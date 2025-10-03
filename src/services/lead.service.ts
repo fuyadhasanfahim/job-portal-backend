@@ -1,8 +1,9 @@
 import LeadModel from '../models/lead.model.js';
 import type { ParsedRow } from '../helpers/fileParser.js';
 import { emitImportProgress } from '../lib/socket.js';
-import type { NewLead } from '../types/lead.interface.js';
-import { Types } from 'mongoose';
+import type { ILead, NewLead } from '../types/lead.interface.js';
+import { Types, type FilterQuery } from 'mongoose';
+import UserModel from '../models/user.model.js';
 
 export interface ImportResult {
     inserted: number;
@@ -14,6 +15,17 @@ export interface ImportResult {
 export interface CreateLeadsOptions {
     uploadId: string;
     chunkSize?: number;
+}
+
+interface GetLeadsOptions {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    country?: string;
+    userId: string;
 }
 
 function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
@@ -50,7 +62,106 @@ function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
     };
 }
 
-export async function createLeadsService(
+export async function getLeadsFromDB({
+    page = 1,
+    limit = 10,
+    search,
+    status,
+    sortBy = 'createdAt',
+    sortOrder = 'desc',
+    country,
+    userId,
+}: GetLeadsOptions) {
+    const query: FilterQuery<ILead> = {};
+
+    const user = await UserModel.findById(userId).lean();
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    if (user.role !== 'admin' && user.role !== 'super-admin') {
+        query.owner = userId;
+    }
+
+    if (status && status !== 'all') {
+        query.status = status;
+    }
+
+    if (country) {
+        query.country = { $regex: country, $options: 'i' };
+    }
+
+    if (search && search.trim()) {
+        const regex = new RegExp(search, 'i');
+        const terms = search.trim().split(/\s+/);
+
+        if (terms.length > 1) {
+            query.$or = [
+                { companyName: regex },
+                { websiteUrl: regex },
+                { emails: regex },
+                { phones: regex },
+                { notes: regex },
+                {
+                    $and: [
+                        {
+                            'contactPerson.firstName': new RegExp(
+                                terms[0] ?? '',
+                                'i',
+                            ),
+                        },
+                        {
+                            'contactPerson.lastName': new RegExp(
+                                terms[1] ?? '',
+                                'i',
+                            ),
+                        },
+                    ],
+                },
+            ];
+        } else {
+            query.$or = [
+                { companyName: regex },
+                { websiteUrl: regex },
+                { emails: regex },
+                { phones: regex },
+                { notes: regex },
+                { 'contactPerson.firstName': regex },
+                { 'contactPerson.lastName': regex },
+            ];
+        }
+    }
+
+    const sort: Record<string, 1 | -1> = {};
+    sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+        LeadModel.find(query)
+            .sort(sort)
+            .skip(skip)
+            .limit(limit)
+            .populate({
+                path: 'accessList.user',
+                select: 'firstName lastName email image',
+            })
+            .lean(),
+        LeadModel.countDocuments(query),
+    ]);
+
+    return {
+        items,
+        pagination: {
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+        },
+    };
+}
+
+export async function importLeadsInDB(
     ownerId: string,
     parsed: ParsedRow[],
     { uploadId, chunkSize = 500 }: CreateLeadsOptions,
@@ -74,7 +185,6 @@ export async function createLeadsService(
         stage: 'deduping',
     });
 
-    // dedup keys
     const allEmails = new Set<string>();
     const allPhones = new Set<string>();
     const allCompanies = new Set<string>();

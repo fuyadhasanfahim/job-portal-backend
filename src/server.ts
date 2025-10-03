@@ -9,7 +9,6 @@ const { port, mongo_uri } = env;
 async function Server() {
     try {
         await connect(mongo_uri as string);
-        console.log('✅ MongoDB connected');
 
         const server = createServer(app);
 

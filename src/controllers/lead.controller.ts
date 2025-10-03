@@ -1,9 +1,54 @@
 import crypto from 'crypto';
 import { type Request, type Response } from 'express';
 import { parseCSV, parseExcel, type ParsedRow } from '../helpers/fileParser.js';
-import { createLeadsService } from '../services/lead.service.js';
+import { getLeadsFromDB, importLeadsInDB } from '../services/lead.service.js';
 
-export async function importLeadsController(req: Request, res: Response) {
+export async function getLeads(req: Request, res: Response) {
+    try {
+        const {
+            page = '1',
+            limit = '10',
+            search,
+            status,
+            sortBy = 'createdAt',
+            sortOrder = 'desc',
+            country,
+        } = req.query;
+
+        const userId = req.auth?.id;
+        if (!userId) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+
+        const result = await getLeadsFromDB({
+            page: parseInt(page as string, 10),
+            limit: parseInt(limit as string, 10),
+            search: search as string,
+            status: status as string,
+            sortBy: sortBy as string,
+            sortOrder: (sortOrder as 'asc' | 'desc') || 'desc',
+            country: country as string,
+            userId,
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Leads fetched successfully',
+            data: result.items,
+            pagination: result.pagination,
+        });
+    } catch (error) {
+        console.error('Error fetching leads:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch leads',
+        });
+    }
+}
+
+export async function importLeads(req: Request, res: Response) {
     try {
         const ownerId = req.auth?.id;
         if (!ownerId) {
@@ -29,7 +74,7 @@ export async function importLeadsController(req: Request, res: Response) {
             parsed = parsed.concat(rows);
         }
 
-        const result = await createLeadsService(ownerId, parsed, { uploadId });
+        const result = await importLeadsInDB(ownerId, parsed, { uploadId });
 
         return res.json({
             success: true,
