@@ -4,7 +4,6 @@ import { getSignedUserService } from '../services/user.service.js';
 export async function getSignedUserController(req: Request, res: Response) {
     try {
         const id = req.auth?.id;
-        console.log(id);
 
         if (!id) {
             return res
