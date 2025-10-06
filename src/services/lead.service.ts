@@ -1,18 +1,20 @@
 import LeadModel from '../models/lead.model.js';
 import type { ParsedRow } from '../helpers/fileParser.js';
 import { emitImportProgress } from '../lib/socket.js';
-import type { ILead, NewLead } from '../types/lead.interface.js';
+import type { ILead, IncomingLead, NewLead } from '../types/lead.interface.js';
 import { Types, type FilterQuery } from 'mongoose';
 import UserModel from '../models/user.model.js';
+import type { MongoBulkWriteError, WriteError } from 'mongodb';
+import { v4 as uuid } from 'uuid';
 
-export interface ImportResult {
+interface ImportResult {
     inserted: number;
     duplicates: number;
     errors: number;
     total: number;
 }
 
-export interface CreateLeadsOptions {
+interface CreateLeadsOptions {
     uploadId: string;
     chunkSize?: number;
 }
@@ -28,18 +30,27 @@ interface GetLeadsOptions {
     userId: string;
 }
 
+interface BulkCreateResult {
+    inserted: number;
+    updated: number;
+    duplicates: number;
+    errors: number;
+    total: number;
+}
+
 function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
     return {
+        rowId: new Types.ObjectId().toString(),
         companyName: String(
             row['Agency Name'] || row['companyName'] || 'Unknown',
         ).trim(),
         websiteUrl:
-            (row['Websites'] as string) || (row['websiteUrl'] as string),
+            (row['Websites'] as string) || (row['websiteUrl'] as string) || '',
         emails: [row['Personal Email'], row['Email.'], row['emails']]
             .filter((e): e is string => Boolean(e))
             .map((e) => e.trim().toLowerCase()),
         phones: row['Phone Number'] ? [String(row['Phone Number']).trim()] : [],
-        address: row['address'] as string,
+        address: (row['address'] as string) || '',
         contactPerson: {
             firstName: String(
                 row['First name'] ||
@@ -50,7 +61,7 @@ function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
                 row['Last Name'] || row['contactPerson.lastName'] || 'Unknown',
             ).trim(),
         },
-        designation: row['Position'] as string,
+        designation: (row['Position'] as string) || '',
         country: (row['country'] as string) || 'Unknown',
         status: 'new',
         notes: [row['Social'], row['Unnamed: 7'], row['notes']]
@@ -268,11 +279,16 @@ export async function importLeadsInDB(
                 ordered: false,
             });
             inserted += result.length;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (e: any) {
-            if (e && Array.isArray(e.writeErrors)) {
-                errors += e.writeErrors.length;
-                inserted += chunk.length - e.writeErrors.length;
+        } catch (err) {
+            if (err && typeof err === 'object' && 'writeErrors' in err) {
+                const e = err as MongoBulkWriteError;
+
+                const writeErrors: WriteError[] = Array.isArray(e.writeErrors)
+                    ? e.writeErrors
+                    : [e.writeErrors];
+
+                errors += writeErrors.length;
+                inserted += toInsert.length - writeErrors.length;
             } else {
                 errors += chunk.length;
             }
@@ -307,4 +323,95 @@ export async function importLeadsInDB(
     });
 
     return { inserted, duplicates, errors, total };
+}
+
+async function mapToDBLead(
+    ownerId: string,
+    lead: IncomingLead,
+): Promise<NewLead> {
+    const adminUsers = await UserModel.find(
+        { role: { $in: ['admin', 'super-admin'] } },
+        '_id',
+    ).lean();
+
+    return {
+        rowId: lead.rowId || uuid(),
+        companyName: lead.companyName?.trim() || 'Unknown',
+        websiteUrl: lead.websiteUrl?.trim() || '',
+        emails: (lead.emails ?? []).map((e) => e.trim().toLowerCase()),
+        phones: (lead.phones ?? []).map((p) => p.trim()),
+        address: lead.address?.trim() || '',
+        contactPerson: {
+            firstName: lead.firstName?.trim() || 'Unknown',
+            lastName: lead.lastName?.trim() || 'Unknown',
+        },
+        designation: lead.designation?.trim() || '',
+        country: lead.country?.trim() || '',
+        notes: lead.notes?.trim() || '',
+
+        status: 'new',
+        owner: new Types.ObjectId(ownerId),
+
+        accessList: adminUsers.map((u) => ({
+            user: u._id as Types.ObjectId,
+            role: 'editor',
+            grantedBy: new Types.ObjectId(ownerId),
+            grantedAt: new Date(),
+        })),
+
+        activities: [],
+    };
+}
+
+export async function bulkCreateLeadsInDB(
+    ownerId: string,
+    leads: IncomingLead[],
+): Promise<BulkCreateResult> {
+    const total = leads.length;
+    let inserted = 0;
+    let updated = 0;
+    let duplicates = 0;
+    let errors = 0;
+
+    for (const lead of leads) {
+        try {
+            const dbLead = await mapToDBLead(ownerId, lead);
+
+            const match = {
+                owner: new Types.ObjectId(ownerId),
+                ...(dbLead.rowId
+                    ? { rowId: dbLead.rowId }
+                    : {
+                          $or: [
+                              { companyName: dbLead.companyName },
+                              ...(dbLead.emails.length > 0
+                                  ? [{ emails: { $in: dbLead.emails } }]
+                                  : []),
+                              ...(dbLead.phones.length > 0
+                                  ? [{ phones: { $in: dbLead.phones } }]
+                                  : []),
+                          ],
+                      }),
+            };
+
+            const result = await LeadModel.updateOne(
+                match,
+                { $set: dbLead },
+                { upsert: true },
+            );
+
+            if (result.upsertedCount && result.upsertedCount > 0) {
+                inserted++;
+            } else if (result.modifiedCount && result.modifiedCount > 0) {
+                updated++;
+            } else {
+                duplicates++;
+            }
+        } catch (err) {
+            console.error('Lead upsert error:', err);
+            errors++;
+        }
+    }
+
+    return { inserted, updated, duplicates, errors, total };
 }

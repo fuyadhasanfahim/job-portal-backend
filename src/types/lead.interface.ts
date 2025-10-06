@@ -1,6 +1,7 @@
 import type { Document, Types } from 'mongoose';
 
 export interface ILead extends Document {
+    rowId: string;
     companyName: string;
     websiteUrl?: string;
     emails: string[];
@@ -45,6 +46,32 @@ export interface ILead extends Document {
     }[];
 }
 
-export type NewLead = Omit<ILead, '_id' | keyof Document> & {
+export type NewLead = Omit<
+    ILead,
+    '_id' | 'createdAt' | 'updatedAt' | keyof Document
+> & {
     owner: Types.ObjectId;
+    rowId?: string;
 };
+
+export type IncomingLead = {
+    rowId?: string;
+    companyName: string;
+    websiteUrl?: string;
+    emails?: string[];
+    phones?: string[];
+    address?: string;
+    firstName?: string;
+    lastName?: string;
+    designation?: string;
+    country?: string;
+    notes?: string;
+};
+
+export interface BulkCreateResult {
+    inserted: number;
+    updated: number;
+    duplicates: number;
+    errors: number;
+    total: number;
+}

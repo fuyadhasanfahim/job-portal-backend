@@ -3,6 +3,7 @@ import type { ILead } from '../types/lead.interface.js';
 
 const LeadSchema = new Schema<ILead>(
     {
+        rowId: { type: String, index: true },
         companyName: { type: String, required: true },
         websiteUrl: { type: String },
         emails: [{ type: String }],

@@ -1,7 +1,11 @@
 import crypto from 'crypto';
 import { type Request, type Response } from 'express';
 import { parseCSV, parseExcel, type ParsedRow } from '../helpers/fileParser.js';
-import { getLeadsFromDB, importLeadsInDB } from '../services/lead.service.js';
+import {
+    bulkCreateLeadsInDB,
+    getLeadsFromDB,
+    importLeadsInDB,
+} from '../services/lead.service.js';
 
 export async function getLeads(req: Request, res: Response) {
     try {
@@ -87,5 +91,37 @@ export async function importLeads(req: Request, res: Response) {
         return res
             .status(500)
             .json({ success: false, message: 'Import failed' });
+    }
+}
+
+export async function bulkCreateLeads(req: Request, res: Response) {
+    try {
+        const ownerId = req.auth?.id;
+
+        if (!ownerId) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+
+        const leads = req.body?.leads;
+
+        if (!Array.isArray(leads) || leads.length === 0) {
+            return res
+                .status(400)
+                .json({ success: false, message: 'No leads provided' });
+        }
+
+        const result = await bulkCreateLeadsInDB(ownerId, leads);
+
+        return res.status(201).json({
+            success: true,
+            ...result,
+        });
+    } catch (error) {
+        console.error('Bulk create error:', error);
+        return res
+            .status(500)
+            .json({ success: false, message: 'Failed to create leads' });
     }
 }
