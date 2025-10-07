@@ -13,8 +13,8 @@ import {
     setRefreshCookie,
 } from '../utils/cookies.js';
 import ms, { type StringValue } from 'ms';
-import { env } from 'process';
 import crypto from 'crypto';
+import env from '../config/env.js';
 
 const refreshMs = ms(env.refresh_expires as StringValue);
 
