@@ -44,6 +44,9 @@ importers:
       multer:
         specifier: ^2.0.2
         version: 2.0.2
+      node:
+        specifier: ^24.9.0
+        version: 24.9.0
       socket.io:
         specifier: ^4.8.1
         version: 4.8.1
@@ -1135,6 +1138,14 @@ packages:
   negotiator@1.0.0:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
+
+  node-bin-setup@1.1.4:
+    resolution: {integrity: sha512-vWNHOne0ZUavArqPP5LJta50+S8R261Fr5SvGul37HbEDcowvLjwdvd0ZeSr0r2lTSrPxl6okq9QUw8BFGiAxA==}
+
+  node@24.9.0:
+    resolution: {integrity: sha512-cczSuf6uJejZ+dR+BAUEd6t2TxW31GvSexzEEvUKKRT59E/oYxUk3fixnUUqMG4tCtjg2wpZp3hfPdGuSg4pgw==}
+    engines: {npm: '>=5.0.0'}
+    hasBin: true
 
   nodemon@3.1.10:
     resolution: {integrity: sha512-WDjw3pJ0/0jMFmyNDp3gvY2YizjLmmOUQo6DEBY+JgdvW/yQ9mEeSw6H5ythl5Ny2ytb7f9C2nIbjSxMNzbJXw==}
@@ -2500,6 +2511,12 @@ snapshots:
   negotiator@0.6.3: {}
 
   negotiator@1.0.0: {}
+
+  node-bin-setup@1.1.4: {}
+
+  node@24.9.0:
+    dependencies:
+      node-bin-setup: 1.1.4
 
   nodemon@3.1.10:
     dependencies:
