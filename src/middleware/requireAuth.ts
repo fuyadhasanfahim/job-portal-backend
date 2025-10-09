@@ -20,7 +20,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
     try {
         const payload = verifyAccess(token);
-        console.log('payload', payload);
+
         req.auth = { id: payload.sub, role: payload.role, jti: payload.jti };
 
         next();
