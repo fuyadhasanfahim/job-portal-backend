@@ -62,8 +62,8 @@ export async function signinService(
     if (!isMatch) throw new Error('INVALID_CREDENTIALS');
 
     const jti = newJti();
-    const access = signAccessToken(String(user._id), jti);
-    const refresh = signRefreshToken(String(user._id), jti);
+    const access = signAccessToken(String(user._id), String(user.role), jti);
+    const refresh = signRefreshToken(String(user._id), String(user.role), jti);
 
     const tokenHash = await hashToken(refresh);
     await RefreshTokenModel.create({
@@ -115,9 +115,12 @@ export async function rotateRefreshToken(
         throw new Error('TOKEN_REUSE');
     }
 
+    const user = await UserModel.findById(payload.sub).lean();
+    if (!user) throw new Error('USER_NOT_FOUND');
+
     const nextJti = newJti();
-    const newAccess = signAccessToken(payload.sub, nextJti);
-    const newRefresh = signRefreshToken(payload.sub, nextJti);
+    const newAccess = signAccessToken(payload.sub, user.role, nextJti);
+    const newRefresh = signRefreshToken(payload.sub, user.role, nextJti);
     const newHash = await hashToken(newRefresh);
 
     stored.revoked = true;

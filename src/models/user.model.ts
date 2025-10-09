@@ -7,7 +7,21 @@ const UserSchema = new Schema<IUser>(
         lastName: { type: String },
         email: { type: String, required: true, unique: true },
         phone: { type: String, required: true },
-        image: { type: String, default: '' },
+        image: { type: String, required: true },
+        designation: { type: String, required: true },
+        address: { type: String, required: true },
+        country: { type: String, required: true },
+        bio: { type: String, required: true },
+        socialLinks: [
+            {
+                icon: { type: String, required: true },
+                username: { type: String, required: true },
+                url: { type: String, required: true },
+                platform: { type: String, required: true },
+                color: { type: String, required: true },
+            },
+        ],
+
         password: { type: String, required: true },
         resetPasswordToken: { type: String },
         resetPasswordExpiry: { type: Date },

@@ -2,9 +2,12 @@ import crypto from 'crypto';
 import { type Request, type Response } from 'express';
 import { parseCSV, parseExcel, type ParsedRow } from '../helpers/fileParser.js';
 import {
+    assignLeadsIntoDB,
     bulkCreateLeadsInDB,
+    getAssignmentsForUserFromDB,
     getLeadsFromDB,
     importLeadsInDB,
+    updateLeadStatusInDB,
 } from '../services/lead.service.js';
 
 export async function getLeads(req: Request, res: Response) {
@@ -86,7 +89,7 @@ export async function importLeads(req: Request, res: Response) {
             uploadId,
             ...result,
         });
-    } catch (error: unknown) {
+    } catch (error) {
         console.error(error);
         return res
             .status(500)
@@ -97,7 +100,6 @@ export async function importLeads(req: Request, res: Response) {
 export async function bulkCreateLeads(req: Request, res: Response) {
     try {
         const ownerId = req.auth?.id;
-
         if (!ownerId) {
             return res
                 .status(401)
@@ -105,7 +107,6 @@ export async function bulkCreateLeads(req: Request, res: Response) {
         }
 
         const leads = req.body?.leads;
-
         if (!Array.isArray(leads) || leads.length === 0) {
             return res
                 .status(400)
@@ -123,5 +124,109 @@ export async function bulkCreateLeads(req: Request, res: Response) {
         return res
             .status(500)
             .json({ success: false, message: 'Failed to create leads' });
+    }
+}
+
+export async function assignLeads(req: Request, res: Response) {
+    try {
+        const { telemarketerId, leads, totalTarget, deadline } = req.body;
+        const assignedBy = req.auth?.id;
+        const role = req.auth?.role;
+
+        if (role !== 'admin' && role !== 'super-admin') {
+            return res
+                .status(403)
+                .json({ success: false, message: 'Forbidden' });
+        }
+        if (!assignedBy) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+
+        const assignment = await assignLeadsIntoDB({
+            telemarketerId,
+            assignedBy,
+            leads,
+            totalTarget,
+            deadline,
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Leads assigned successfully',
+            data: assignment,
+        });
+    } catch (error) {
+        res.status(400).json({
+            success: false,
+            message: 'Failed to assign leads',
+            error: (error as Error).message,
+        });
+    }
+}
+
+export async function getAssignments(req: Request, res: Response) {
+    try {
+        const userId = req.params.userId || req.auth?.id;
+        const role = req.auth?.role;
+
+        if (!userId) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+
+        const assignments = await getAssignmentsForUserFromDB(userId, role);
+
+        res.status(200).json({
+            success: true,
+            message: 'Assignments fetched successfully',
+            data: assignments,
+        });
+    } catch (error) {
+        res.status(400).json({
+            success: false,
+            message: 'Failed to fetch assignments',
+            error: (error as Error).message,
+        });
+    }
+}
+
+export async function updateLeadStatus(req: Request, res: Response) {
+    try {
+        const { status, note } = req.body;
+        const leadId = req.params.leadId;
+        const userId = req.auth?.id;
+
+        if (!userId) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+        if (!leadId) {
+            return res
+                .status(400)
+                .json({ success: false, message: 'Lead ID is required' });
+        }
+
+        const updated = await updateLeadStatusInDB({
+            leadId,
+            userId,
+            status,
+            note,
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Lead status updated successfully',
+            data: updated,
+        });
+    } catch (error) {
+        res.status(400).json({
+            success: false,
+            message: 'Failed to update lead status',
+            error: (error as Error).message,
+        });
     }
 }

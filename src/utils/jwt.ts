@@ -3,24 +3,24 @@ import crypto from 'crypto';
 import env from '../config/env.js';
 import type { StringValue } from 'ms';
 
-type JwtPayloadBase = { sub: string; jti: string };
+type JwtPayloadBase = { sub: string; role: string; jti: string };
 
 export function newJti() {
     return crypto.randomUUID();
 }
 
-export function signAccessToken(userId: string, jti: string) {
+export function signAccessToken(userId: string, role: string, jti: string) {
     const options: SignOptions = {
         expiresIn: env.access_expires as StringValue | number,
     };
-    return jwt.sign({ sub: userId, jti }, env.access_secret, options);
+    return jwt.sign({ sub: userId, role, jti }, env.access_secret, options);
 }
 
-export function signRefreshToken(userId: string, jti: string) {
+export function signRefreshToken(userId: string, role: string, jti: string) {
     const options: SignOptions = {
         expiresIn: env.refresh_expires as StringValue | number,
     };
-    return jwt.sign({ sub: userId, jti }, env.refresh_secret, options);
+    return jwt.sign({ sub: userId, role, jti }, env.refresh_secret, options);
 }
 
 export function verifyAccess(token: string) {

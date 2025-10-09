@@ -1,11 +1,12 @@
 import LeadModel from '../models/lead.model.js';
+import UserModel from '../models/user.model.js';
+import LeadAssignmentModel from '../models/lead.assignment.model.js';
 import type { ParsedRow } from '../helpers/fileParser.js';
 import { emitImportProgress } from '../lib/socket.js';
 import type { ILead, IncomingLead, NewLead } from '../types/lead.interface.js';
 import { Types, type FilterQuery } from 'mongoose';
-import UserModel from '../models/user.model.js';
-import type { MongoBulkWriteError, WriteError } from 'mongodb';
 import { v4 as uuid } from 'uuid';
+import type { MongoBulkWriteError, WriteError } from 'mongodb';
 
 interface ImportResult {
     inserted: number;
@@ -40,7 +41,7 @@ interface BulkCreateResult {
 
 function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
     return {
-        rowId: new Types.ObjectId().toString(),
+        rowId: uuid(),
         companyName: String(
             row['Agency Name'] || row['companyName'] || 'Unknown',
         ).trim(),
@@ -86,21 +87,14 @@ export async function getLeadsFromDB({
     const query: FilterQuery<ILead> = {};
 
     const user = await UserModel.findById(userId).lean();
-    if (!user) {
-        throw new Error('User not found');
-    }
+    if (!user) throw new Error('User not found');
 
     if (user.role !== 'admin' && user.role !== 'super-admin') {
         query.owner = userId;
     }
 
-    if (status && status !== 'all') {
-        query.status = status;
-    }
-
-    if (country) {
-        query.country = { $regex: country, $options: 'i' };
-    }
+    if (status && status !== 'all') query.status = status;
+    if (country) query.country = { $regex: country, $options: 'i' };
 
     if (search && search.trim()) {
         const regex = new RegExp(search, 'i');
@@ -282,13 +276,11 @@ export async function importLeadsInDB(
         } catch (err) {
             if (err && typeof err === 'object' && 'writeErrors' in err) {
                 const e = err as MongoBulkWriteError;
-
                 const writeErrors: WriteError[] = Array.isArray(e.writeErrors)
                     ? e.writeErrors
                     : [e.writeErrors];
-
                 errors += writeErrors.length;
-                inserted += toInsert.length - writeErrors.length;
+                inserted += chunk.length - writeErrors.length;
             } else {
                 errors += chunk.length;
             }
@@ -325,44 +317,6 @@ export async function importLeadsInDB(
     return { inserted, duplicates, errors, total };
 }
 
-async function mapToDBLead(
-    ownerId: string,
-    lead: IncomingLead,
-): Promise<NewLead> {
-    const adminUsers = await UserModel.find(
-        { role: { $in: ['admin', 'super-admin'] } },
-        '_id',
-    ).lean();
-
-    return {
-        rowId: lead.rowId || uuid(),
-        companyName: lead.companyName?.trim() || 'Unknown',
-        websiteUrl: lead.websiteUrl?.trim() || '',
-        emails: (lead.emails ?? []).map((e) => e.trim().toLowerCase()),
-        phones: (lead.phones ?? []).map((p) => p.trim()),
-        address: lead.address?.trim() || '',
-        contactPerson: {
-            firstName: lead.firstName?.trim() || 'Unknown',
-            lastName: lead.lastName?.trim() || 'Unknown',
-        },
-        designation: lead.designation?.trim() || '',
-        country: lead.country?.trim() || '',
-        notes: lead.notes?.trim() || '',
-
-        status: 'new',
-        owner: new Types.ObjectId(ownerId),
-
-        accessList: adminUsers.map((u) => ({
-            user: u._id as Types.ObjectId,
-            role: 'editor',
-            grantedBy: new Types.ObjectId(ownerId),
-            grantedAt: new Date(),
-        })),
-
-        activities: [],
-    };
-}
-
 export async function bulkCreateLeadsInDB(
     ownerId: string,
     leads: IncomingLead[],
@@ -375,7 +329,25 @@ export async function bulkCreateLeadsInDB(
 
     for (const lead of leads) {
         try {
-            const dbLead = await mapToDBLead(ownerId, lead);
+            const dbLead: NewLead = {
+                rowId: lead.rowId || uuid(),
+                companyName: lead.companyName?.trim() || 'Unknown',
+                websiteUrl: lead.websiteUrl?.trim() || '',
+                emails: (lead.emails ?? []).map((e) => e.trim().toLowerCase()),
+                phones: (lead.phones ?? []).map((p) => p.trim()),
+                address: lead.address?.trim() || '',
+                contactPerson: {
+                    firstName: lead.firstName?.trim() || 'Unknown',
+                    lastName: lead.lastName?.trim() || 'Unknown',
+                },
+                designation: lead.designation?.trim() || '',
+                country: lead.country?.trim() || '',
+                notes: lead.notes?.trim() || '',
+                status: 'new',
+                owner: new Types.ObjectId(ownerId),
+                accessList: [],
+                activities: [],
+            };
 
             const match = {
                 owner: new Types.ObjectId(ownerId),
@@ -414,4 +386,139 @@ export async function bulkCreateLeadsInDB(
     }
 
     return { inserted, updated, duplicates, errors, total };
+}
+
+export async function assignLeadsIntoDB({
+    telemarketerId,
+    assignedBy,
+    leads,
+    totalTarget,
+    deadline,
+}: {
+    telemarketerId: string;
+    assignedBy: string;
+    leads: string[];
+    totalTarget?: number;
+    deadline?: Date;
+}) {
+    const existingLeads = await LeadModel.find({
+        _id: { $in: leads.map((id) => new Types.ObjectId(id)) },
+    });
+    if (existingLeads.length !== leads.length) {
+        throw new Error('Some leads do not exist');
+    }
+
+    await LeadModel.updateMany(
+        { _id: { $in: leads } },
+        {
+            $addToSet: {
+                accessList: {
+                    user: new Types.ObjectId(telemarketerId),
+                    role: 'editor',
+                    grantedBy: new Types.ObjectId(assignedBy),
+                    grantedAt: new Date(),
+                },
+            },
+        },
+    );
+
+    const assignment = await LeadAssignmentModel.create({
+        telemarketer: telemarketerId,
+        assignedBy,
+        leads,
+        totalTarget,
+        deadline,
+        completedCount: 0,
+        completedLeads: [],
+        status: 'active',
+    });
+
+    return assignment;
+}
+
+export async function getAssignmentsForUserFromDB(
+    userId: string,
+    role?: string,
+) {
+    const query =
+        role === 'admin' || role === 'super-admin'
+            ? {}
+            : { telemarketer: userId };
+
+    return LeadAssignmentModel.find(query)
+        .populate('leads')
+        .populate('assignedBy', 'firstName lastName email');
+}
+
+export async function updateProgress(leadId: string, userId: string) {
+    const assignment = await LeadAssignmentModel.findOne({
+        telemarketer: userId,
+        leads: leadId,
+        status: 'active',
+    });
+
+    if (!assignment) return null;
+
+    if (!assignment.completedLeads) assignment.completedLeads = [];
+    if (assignment.completedLeads.includes(new Types.ObjectId(leadId)))
+        return assignment;
+
+    assignment.completedLeads.push(new Types.ObjectId(leadId));
+    assignment.completedCount = assignment.completedLeads.length;
+
+    if (
+        assignment.totalTarget &&
+        assignment.completedCount >= assignment.totalTarget
+    ) {
+        assignment.status = 'completed';
+    }
+
+    await assignment.save();
+    return assignment;
+}
+
+export async function checkAndExpireAssignments() {
+    const now = new Date();
+    return LeadAssignmentModel.updateMany(
+        { deadline: { $lt: now }, status: 'active' },
+        { $set: { status: 'expired' } },
+    );
+}
+
+export async function updateLeadStatusInDB({
+    leadId,
+    userId,
+    status,
+    note,
+}: {
+    leadId: string;
+    userId: string;
+    status: string;
+    note?: string;
+}) {
+    const lead = await LeadModel.findById(leadId);
+    if (!lead) throw new Error('Lead not found');
+
+    lead.status = status as ILead['status'];
+
+    lead.activities.push({
+        type: 'status_change',
+        content: `Status changed to ${status}`,
+        byUser: new Types.ObjectId(userId),
+        at: new Date(),
+    });
+
+    if (note) {
+        lead.activities.push({
+            type: 'note',
+            content: note,
+            byUser: new Types.ObjectId(userId),
+            at: new Date(),
+        });
+    }
+
+    await lead.save();
+    await updateProgress(leadId, userId);
+
+    return lead;
 }

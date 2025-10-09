@@ -3,7 +3,7 @@ import { verifyAccess } from '../utils/jwt.js';
 
 declare module 'express' {
     interface Request {
-        auth?: { id: string; jti: string };
+        auth?: { id: string; role: string; jti: string };
     }
 }
 
@@ -17,10 +17,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     }
 
     const token = header.slice('Bearer '.length).trim();
-    
+
     try {
         const payload = verifyAccess(token);
-        req.auth = { id: payload.sub, jti: payload.jti };
+        console.log('payload', payload);
+        req.auth = { id: payload.sub, role: payload.role, jti: payload.jti };
 
         next();
     } catch (error) {
