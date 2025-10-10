@@ -5,7 +5,6 @@ import type { ParsedRow } from '../helpers/fileParser.js';
 import { emitImportProgress } from '../lib/socket.js';
 import type { ILead, IncomingLead, NewLead } from '../types/lead.interface.js';
 import { Types, type FilterQuery } from 'mongoose';
-import { v4 as uuid } from 'uuid';
 import type { MongoBulkWriteError, WriteError } from 'mongodb';
 
 interface ImportResult {
@@ -31,17 +30,8 @@ interface GetLeadsOptions {
     userId: string;
 }
 
-interface BulkCreateResult {
-    inserted: number;
-    updated: number;
-    duplicates: number;
-    errors: number;
-    total: number;
-}
-
 function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
     return {
-        rowId: uuid(),
         companyName: String(
             row['Agency Name'] || row['companyName'] || 'Unknown',
         ).trim(),
@@ -89,13 +79,22 @@ export async function getLeadsFromDB({
     const user = await UserModel.findById(userId).lean();
     if (!user) throw new Error('User not found');
 
+    // Restrict to only owner for non-admins
     if (user.role !== 'admin' && user.role !== 'super-admin') {
-        query.owner = userId;
+        query.owner = new Types.ObjectId(userId);
     }
 
-    if (status && status !== 'all') query.status = status;
-    if (country) query.country = { $regex: country, $options: 'i' };
+    // Status filter (skip "all")
+    if (status && status !== 'all') {
+        query.status = status;
+    }
 
+    // Country filter (skip "all")
+    if (country && country !== 'all') {
+        query.country = { $regex: country, $options: 'i' };
+    }
+
+    // Search filter
     if (search && search.trim()) {
         const regex = new RegExp(search, 'i');
         const terms = search.trim().split(/\s+/);
@@ -104,8 +103,8 @@ export async function getLeadsFromDB({
             query.$or = [
                 { companyName: regex },
                 { websiteUrl: regex },
-                { emails: regex },
-                { phones: regex },
+                { emails: { $in: [regex] } },
+                { phones: { $in: [regex] } },
                 { notes: regex },
                 {
                     $and: [
@@ -128,8 +127,8 @@ export async function getLeadsFromDB({
             query.$or = [
                 { companyName: regex },
                 { websiteUrl: regex },
-                { emails: regex },
-                { phones: regex },
+                { emails: { $in: [regex] } },
+                { phones: { $in: [regex] } },
                 { notes: regex },
                 { 'contactPerson.firstName': regex },
                 { 'contactPerson.lastName': regex },
@@ -164,6 +163,13 @@ export async function getLeadsFromDB({
             totalPages: Math.ceil(total / limit),
         },
     };
+}
+
+export async function getLeadByIdFromDB(id: string) {
+    const lead = await LeadModel.findById(id).lean();
+    console.log(lead);
+
+    return lead;
 }
 
 export async function importLeadsInDB(
@@ -317,78 +323,71 @@ export async function importLeadsInDB(
     return { inserted, duplicates, errors, total };
 }
 
-export async function bulkCreateLeadsInDB(
+export async function newLeadsInDB(
     ownerId: string,
-    leads: IncomingLead[],
-): Promise<BulkCreateResult> {
-    const total = leads.length;
-    let inserted = 0;
-    let updated = 0;
-    let duplicates = 0;
-    let errors = 0;
+    lead: IncomingLead,
+): Promise<{
+    inserted: number;
+    updated: number;
+    duplicate: boolean;
+    error: boolean;
+}> {
+    try {
+        console.log(lead);
 
-    for (const lead of leads) {
-        try {
-            const dbLead: NewLead = {
-                rowId: lead.rowId || uuid(),
-                companyName: lead.companyName?.trim() || 'Unknown',
-                websiteUrl: lead.websiteUrl?.trim() || '',
-                emails: (lead.emails ?? []).map((e) => e.trim().toLowerCase()),
-                phones: (lead.phones ?? []).map((p) => p.trim()),
-                address: lead.address?.trim() || '',
-                contactPerson: {
-                    firstName: lead.firstName?.trim() || 'Unknown',
-                    lastName: lead.lastName?.trim() || 'Unknown',
-                },
-                designation: lead.designation?.trim() || '',
-                country: lead.country?.trim() || '',
-                notes: lead.notes?.trim() || '',
-                status: 'new',
-                owner: new Types.ObjectId(ownerId),
-                accessList: [],
-                activities: [],
-            };
+        const dbLead: NewLead = {
+            companyName: lead.companyName?.trim(),
+            websiteUrl: lead.websiteUrl?.trim() || '',
+            emails: (lead.emails ?? []).map((e) => e.trim().toLowerCase()),
+            phones: (lead.phones ?? []).map((p) => p.trim()),
+            address: lead.address?.trim() || '',
+            contactPerson: lead.contactPerson,
+            designation: lead.designation?.trim() || '',
+            country: lead.country?.trim() || '',
+            notes: lead.notes?.trim() || '',
+            status: 'new',
+            owner: new Types.ObjectId(ownerId),
+            accessList: [],
+            activities: [],
+        };
 
-            const match = {
-                owner: new Types.ObjectId(ownerId),
-                ...(dbLead.rowId
-                    ? { rowId: dbLead.rowId }
-                    : {
-                          $or: [
-                              { companyName: dbLead.companyName },
-                              ...(dbLead.emails.length > 0
-                                  ? [{ emails: { $in: dbLead.emails } }]
-                                  : []),
-                              ...(dbLead.phones.length > 0
-                                  ? [{ phones: { $in: dbLead.phones } }]
-                                  : []),
-                          ],
-                      }),
-            };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const match: any = {
+            owner: new Types.ObjectId(ownerId),
+            $or: [
+                { companyName: dbLead.companyName },
+                ...(dbLead.emails.length > 0
+                    ? [{ emails: { $in: dbLead.emails } }]
+                    : []),
+                ...(dbLead.phones.length > 0
+                    ? [{ phones: { $in: dbLead.phones } }]
+                    : []),
+            ],
+        };
 
-            const result = await LeadModel.updateOne(
-                match,
-                { $set: dbLead },
-                { upsert: true },
-            );
+        const result = await LeadModel.updateOne(
+            match,
+            { $set: dbLead },
+            { upsert: true },
+        );
 
-            if (result.upsertedCount && result.upsertedCount > 0) {
-                inserted++;
-            } else if (result.modifiedCount && result.modifiedCount > 0) {
-                updated++;
-            } else {
-                duplicates++;
-            }
-        } catch (err) {
-            console.error('Lead upsert error:', err);
-            errors++;
+        if (result.upsertedCount && result.upsertedCount > 0) {
+            // New document created
+            return { inserted: 1, updated: 0, duplicate: false, error: false };
+        } else if (result.modifiedCount && result.modifiedCount > 0) {
+            // Existing doc updated
+            return { inserted: 0, updated: 1, duplicate: false, error: false };
+        } else {
+            // Nothing inserted/updated → duplicate
+            return { inserted: 0, updated: 0, duplicate: true, error: false };
         }
+    } catch (err) {
+        console.error('Lead insert error:', err);
+        return { inserted: 0, updated: 0, duplicate: false, error: true };
     }
-
-    return { inserted, updated, duplicates, errors, total };
 }
 
-export async function assignLeadsIntoDB({
+export async function assignTelemarketerIntoDB({
     telemarketerId,
     assignedBy,
     leads,

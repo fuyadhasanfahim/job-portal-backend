@@ -1,7 +1,6 @@
 import type { Document, Types } from 'mongoose';
 
 export interface ILead extends Document {
-    rowId: string;
     companyName: string;
     websiteUrl?: string;
     emails: string[];
@@ -9,7 +8,7 @@ export interface ILead extends Document {
     address?: string;
     contactPerson: {
         firstName: string;
-        lastName: string;
+        lastName?: string;
     };
     designation?: string;
     country: string;
@@ -61,8 +60,10 @@ export type IncomingLead = {
     emails?: string[];
     phones?: string[];
     address?: string;
-    firstName?: string;
-    lastName?: string;
+    contactPerson: {
+        firstName: string;
+        lastName?: string;
+    };
     designation?: string;
     country?: string;
     notes?: string;

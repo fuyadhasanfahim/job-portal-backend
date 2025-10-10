@@ -2,12 +2,13 @@ import crypto from 'crypto';
 import { type Request, type Response } from 'express';
 import { parseCSV, parseExcel, type ParsedRow } from '../helpers/fileParser.js';
 import {
-    assignLeadsIntoDB,
-    bulkCreateLeadsInDB,
+    assignTelemarketerIntoDB,
+    newLeadsInDB,
     getAssignmentsForUserFromDB,
     getLeadsFromDB,
     importLeadsInDB,
     updateLeadStatusInDB,
+    getLeadByIdFromDB,
 } from '../services/lead.service.js';
 
 export async function getLeads(req: Request, res: Response) {
@@ -45,6 +46,33 @@ export async function getLeads(req: Request, res: Response) {
             message: 'Leads fetched successfully',
             data: result.items,
             pagination: result.pagination,
+        });
+    } catch (error) {
+        console.error('Error fetching leads:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch leads',
+        });
+    }
+}
+
+export async function getLeadById(req: Request, res: Response) {
+    try {
+        const { id } = req.params;
+        console.log(id);
+
+        if (!id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Id is required.',
+            });
+        }
+
+        const lead = await getLeadByIdFromDB(id);
+
+        res.status(200).json({
+            success: true,
+            lead,
         });
     } catch (error) {
         console.error('Error fetching leads:', error);
@@ -97,7 +125,7 @@ export async function importLeads(req: Request, res: Response) {
     }
 }
 
-export async function bulkCreateLeads(req: Request, res: Response) {
+export async function newLead(req: Request, res: Response) {
     try {
         const ownerId = req.auth?.id;
         if (!ownerId) {
@@ -106,28 +134,28 @@ export async function bulkCreateLeads(req: Request, res: Response) {
                 .json({ success: false, message: 'Unauthorized' });
         }
 
-        const leads = req.body?.leads;
-        if (!Array.isArray(leads) || leads.length === 0) {
+        const lead = req.body;
+        if (!lead) {
             return res
                 .status(400)
-                .json({ success: false, message: 'No leads provided' });
+                .json({ success: false, message: 'No lead provided' });
         }
 
-        const result = await bulkCreateLeadsInDB(ownerId, leads);
+        const result = await newLeadsInDB(ownerId, lead);
 
         return res.status(201).json({
             success: true,
             ...result,
         });
     } catch (error) {
-        console.error('Bulk create error:', error);
+        console.error('New lead error:', error);
         return res
             .status(500)
-            .json({ success: false, message: 'Failed to create leads' });
+            .json({ success: false, message: 'Failed to create lead' });
     }
 }
 
-export async function assignLeads(req: Request, res: Response) {
+export async function assignTelemarketer(req: Request, res: Response) {
     try {
         const { telemarketerId, leads, totalTarget, deadline } = req.body;
         const assignedBy = req.auth?.id;
@@ -144,7 +172,7 @@ export async function assignLeads(req: Request, res: Response) {
                 .json({ success: false, message: 'Unauthorized' });
         }
 
-        const assignment = await assignLeadsIntoDB({
+        const assignment = await assignTelemarketerIntoDB({
             telemarketerId,
             assignedBy,
             leads,
