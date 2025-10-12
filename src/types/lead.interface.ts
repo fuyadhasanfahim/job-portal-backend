@@ -1,78 +1,94 @@
 import type { Document, Types } from 'mongoose';
 
-export interface ILead extends Document {
-    companyName: string;
-    websiteUrl?: string;
+export interface ICompany {
+    name: string;
+    website: string;
+    emails?: string[];
+    phones?: string[];
+}
+
+export interface IContactPerson {
+    firstName: string;
+    lastName?: string;
+    designation?: string;
     emails: string[];
     phones: string[];
+}
+
+export interface IActivity {
+    outcomeCode:
+        | 'connected'
+        | 'qualified'
+        | 'notQualified'
+        | 'callbackScheduled'
+        | 'needsDecisionMaker'
+        | 'sendInfo'
+        | 'negotiation'
+        | 'won'
+        | 'lost'
+        | 'noAnswer'
+        | 'voicemailLeft'
+        | 'busy'
+        | 'switchedOff'
+        | 'invalidNumber'
+        | 'wrongPerson'
+        | 'dnd'
+        | 'followUpScheduled'
+        | 'followUpOverdue'
+        | 'unreachable'
+        | 'duplicate'
+        | 'archived';
+
+    nextAction?:
+        | 'scheduleMeeting'
+        | 'sendProposal'
+        | 'followUp'
+        | 'retry'
+        | 'enrichContact'
+        | 'markDnc'
+        | 'closeLost';
+
+    dueAt?: Date;
+    notes?: string;
+    lostReason?:
+        | 'noBudget'
+        | 'notInterested'
+        | 'timing'
+        | 'competitor'
+        | 'other';
+    attemptNumber?: number;
+    durationSec?: number;
+    contactedChannel?: 'phone' | 'sms' | 'whatsapp' | 'email';
+
+    type: 'call' | 'email' | 'note' | 'statusChange';
+    content?: string;
+    statusFrom?: string;
+    statusTo?: string;
+
+    byUser: Types.ObjectId;
+    at: Date;
+    result?: string;
+}
+
+export interface ILead extends Document {
+    company: ICompany;
     address?: string;
-    contactPerson: {
-        firstName: string;
-        lastName?: string;
-    };
-    designation?: string;
     country: string;
+    notes?: string;
+
+    contactPersons: IContactPerson[];
+
     status:
         | 'new'
         | 'contacted'
         | 'responded'
         | 'qualified'
-        | 'meeting_scheduled'
+        | 'meetingScheduled'
         | 'proposal'
         | 'won'
         | 'lost'
-        | 'on_hold';
-    notes?: string;
+        | 'onHold';
 
     owner: Types.ObjectId;
-    assignedBy?: Types.ObjectId;
-    assignedAt?: Date;
-
-    accessList: {
-        user: Types.ObjectId;
-        role: 'owner' | 'editor' | 'viewer';
-        grantedBy: Types.ObjectId;
-        grantedAt: Date;
-    }[];
-
-    activities: {
-        type: 'call' | 'email' | 'note' | 'status_change';
-        content: string;
-        byUser: Types.ObjectId;
-        at: Date;
-        result?: string;
-        nextActionAt?: Date;
-    }[];
-}
-
-export type NewLead = Omit<
-    ILead,
-    '_id' | 'createdAt' | 'updatedAt' | keyof Document
-> & {
-    owner: Types.ObjectId;
-    rowId?: string;
-};
-
-export type IncomingLead = {
-    rowId?: string;
-    companyName: string;
-    websiteUrl?: string;
-    emails?: string[];
-    phones?: string[];
-    address?: string;
-    contactPerson: {
-        firstName: string;
-        lastName?: string;
-    };
-    designation?: string;
-    country?: string;
-    notes?: string;
-};
-
-export interface BulkCreateResult {
-    inserted: number;
-    updated: number;
-    duplicates: number;
-    errors: number;
-    total: number;
+    activities?: IActivity[];
 }

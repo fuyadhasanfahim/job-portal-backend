@@ -1,70 +1,26 @@
 import LeadModel from '../models/lead.model.js';
 import UserModel from '../models/user.model.js';
-import LeadAssignmentModel from '../models/lead.assignment.model.js';
-import type { ParsedRow } from '../helpers/fileParser.js';
-import { emitImportProgress } from '../lib/socket.js';
-import type { ILead, IncomingLead, NewLead } from '../types/lead.interface.js';
+import type {
+    IActivity,
+    ICompany,
+    IContactPerson,
+    ILead,
+} from '../types/lead.interface.js';
 import { Types, type FilterQuery } from 'mongoose';
-import type { MongoBulkWriteError, WriteError } from 'mongodb';
+import type {
+    newLeadValidation,
+    UpdateLeadInput,
+} from '../validators/lead.validator.js';
+import type z from 'zod';
+import {
+    parseContactPersons,
+    parseEmails,
+    parsePhones,
+    type ImportResult,
+    type ParsedRow,
+} from '../helpers/fileParser.js';
 
-interface ImportResult {
-    inserted: number;
-    duplicates: number;
-    errors: number;
-    total: number;
-}
-
-interface CreateLeadsOptions {
-    uploadId: string;
-    chunkSize?: number;
-}
-
-interface GetLeadsOptions {
-    page?: number;
-    limit?: number;
-    search?: string;
-    status?: string;
-    sortBy?: string;
-    sortOrder?: 'asc' | 'desc';
-    country?: string;
-    userId: string;
-}
-
-function mapRowToLead(row: ParsedRow, ownerId: string): NewLead {
-    return {
-        companyName: String(
-            row['Agency Name'] || row['companyName'] || 'Unknown',
-        ).trim(),
-        websiteUrl:
-            (row['Websites'] as string) || (row['websiteUrl'] as string) || '',
-        emails: [row['Personal Email'], row['Email.'], row['emails']]
-            .filter((e): e is string => Boolean(e))
-            .map((e) => e.trim().toLowerCase()),
-        phones: row['Phone Number'] ? [String(row['Phone Number']).trim()] : [],
-        address: (row['address'] as string) || '',
-        contactPerson: {
-            firstName: String(
-                row['First name'] ||
-                    row['contactPerson.firstName'] ||
-                    'Unknown',
-            ).trim(),
-            lastName: String(
-                row['Last Name'] || row['contactPerson.lastName'] || 'Unknown',
-            ).trim(),
-        },
-        designation: (row['Position'] as string) || '',
-        country: (row['country'] as string) || 'Unknown',
-        status: 'new',
-        notes: [row['Social'], row['Unnamed: 7'], row['notes']]
-            .filter(Boolean)
-            .join(' '),
-        owner: new Types.ObjectId(ownerId),
-        accessList: [],
-        activities: [],
-    };
-}
-
-export async function getLeadsFromDB({
+async function getLeadsFromDB({
     page = 1,
     limit = 10,
     search,
@@ -73,50 +29,56 @@ export async function getLeadsFromDB({
     sortOrder = 'desc',
     country,
     userId,
-}: GetLeadsOptions) {
+}: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    country?: string;
+    userId: string;
+}) {
     const query: FilterQuery<ILead> = {};
 
     const user = await UserModel.findById(userId).lean();
+
     if (!user) throw new Error('User not found');
 
-    // Restrict to only owner for non-admins
     if (user.role !== 'admin' && user.role !== 'super-admin') {
         query.owner = new Types.ObjectId(userId);
     }
 
-    // Status filter (skip "all")
     if (status && status !== 'all') {
         query.status = status;
     }
 
-    // Country filter (skip "all")
     if (country && country !== 'all') {
         query.country = { $regex: country, $options: 'i' };
     }
 
-    // Search filter
     if (search && search.trim()) {
-        const regex = new RegExp(search, 'i');
+        const regex = new RegExp(search.trim(), 'i');
         const terms = search.trim().split(/\s+/);
 
         if (terms.length > 1) {
             query.$or = [
-                { companyName: regex },
-                { websiteUrl: regex },
-                { emails: { $in: [regex] } },
-                { phones: { $in: [regex] } },
+                { 'company.name': regex },
+                { 'company.website': regex },
+                { 'company.emails': { $elemMatch: { $regex: regex } } },
+                { 'company.phones': { $elemMatch: { $regex: regex } } },
                 { notes: regex },
                 {
                     $and: [
                         {
-                            'contactPerson.firstName': new RegExp(
-                                terms[0] ?? '',
+                            'contactPersons.firstName': new RegExp(
+                                terms[0] as string,
                                 'i',
                             ),
                         },
                         {
-                            'contactPerson.lastName': new RegExp(
-                                terms[1] ?? '',
+                            'contactPersons.lastName': new RegExp(
+                                terms[1] as string,
                                 'i',
                             ),
                         },
@@ -125,13 +87,15 @@ export async function getLeadsFromDB({
             ];
         } else {
             query.$or = [
-                { companyName: regex },
-                { websiteUrl: regex },
-                { emails: { $in: [regex] } },
-                { phones: { $in: [regex] } },
+                { 'company.name': regex },
+                { 'company.website': regex },
+                { 'company.emails': { $elemMatch: { $regex: regex } } },
+                { 'company.phones': { $elemMatch: { $regex: regex } } },
                 { notes: regex },
-                { 'contactPerson.firstName': regex },
-                { 'contactPerson.lastName': regex },
+                { 'contactPersons.firstName': regex },
+                { 'contactPersons.lastName': regex },
+                { 'contactPersons.emails': { $elemMatch: { $regex: regex } } },
+                { 'contactPersons.phones': { $elemMatch: { $regex: regex } } },
             ];
         }
     }
@@ -147,17 +111,22 @@ export async function getLeadsFromDB({
             .skip(skip)
             .limit(limit)
             .populate({
-                path: 'accessList.user',
-                select: 'firstName lastName email image',
+                path: 'owner',
+                select: 'firstName lastName email role',
+            })
+            .populate({
+                path: 'activities.byUser',
+                select: 'firstName lastName email',
             })
             .lean(),
+
         LeadModel.countDocuments(query),
     ]);
 
     return {
         items,
         pagination: {
-            total,
+            totalItems: total,
             page,
             limit,
             totalPages: Math.ceil(total / limit),
@@ -165,202 +134,90 @@ export async function getLeadsFromDB({
     };
 }
 
-export async function getLeadByIdFromDB(id: string) {
-    const lead = await LeadModel.findById(id).lean();
-    console.log(lead);
+async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
+    const user = await UserModel.findById(userId).lean();
+
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    const lead = await LeadModel.findById(id)
+        .populate({
+            path: 'owner',
+            select: 'firstName lastName email role',
+        })
+        .populate({
+            path: 'activities.byUser',
+            select: 'firstName lastName email',
+        })
+        .sort({ createdAt: -1 })
+        .lean();
+
+    if (!lead) {
+        return null;
+    }
+
+    if (lead.activities) {
+        lead.activities.sort(
+            (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+        );
+    }
+
+    const isAdmin = userRole === 'admin' || userRole === 'super-admin';
+
+    const isOwner =
+        lead.owner && lead.owner._id?.toString() === userId.toString();
+
+    if (!isAdmin && !isOwner) {
+        const err = new Error('Access forbidden') as Error & {
+            status?: number;
+        };
+        err.status = 403;
+        throw err;
+    }
 
     return lead;
 }
 
-export async function importLeadsInDB(
+async function newLeadsInDB(
     ownerId: string,
-    parsed: ParsedRow[],
-    { uploadId, chunkSize = 500 }: CreateLeadsOptions,
-): Promise<ImportResult> {
-    const total = parsed.length;
-    let processed = 0;
-    let inserted = 0;
-    let duplicates = 0;
-    let errors = 0;
-
-    const candidates: NewLead[] = parsed.map((r) => mapRowToLead(r, ownerId));
-
-    emitImportProgress(uploadId, {
-        total,
-        processed,
-        percentage: 0,
-        inserted,
-        duplicates,
-        errors,
-        remaining: total,
-        stage: 'deduping',
-    });
-
-    const allEmails = new Set<string>();
-    const allPhones = new Set<string>();
-    const allCompanies = new Set<string>();
-    for (const c of candidates) {
-        c.emails.forEach((e) => allEmails.add(e));
-        c.phones.forEach((p) => allPhones.add(p));
-        allCompanies.add(c.companyName);
-    }
-
-    const existing = await LeadModel.find(
-        {
-            owner: ownerId,
-            $or: [
-                ...(allEmails.size
-                    ? [{ emails: { $in: Array.from(allEmails) } }]
-                    : []),
-                ...(allPhones.size
-                    ? [{ phones: { $in: Array.from(allPhones) } }]
-                    : []),
-                ...(allCompanies.size
-                    ? [{ companyName: { $in: Array.from(allCompanies) } }]
-                    : []),
-            ],
-        },
-        { emails: 1, phones: 1, companyName: 1 },
-    ).lean();
-
-    const existingEmails = new Set<string>();
-    const existingPhones = new Set<string>();
-    const existingCompanies = new Set<string>();
-    for (const ex of existing) {
-        (ex.emails ?? []).forEach((e: string) => existingEmails.add(e));
-        (ex.phones ?? []).forEach((p: string) => existingPhones.add(p));
-        if (ex.companyName) existingCompanies.add(String(ex.companyName));
-    }
-
-    const seenEmails = new Set<string>();
-    const seenPhones = new Set<string>();
-    const seenCompanies = new Set<string>();
-
-    const toInsert: NewLead[] = [];
-    for (const c of candidates) {
-        const isDupCompany =
-            c.companyName &&
-            (existingCompanies.has(c.companyName) ||
-                seenCompanies.has(c.companyName));
-        const isDupEmail = c.emails.some(
-            (e) => existingEmails.has(e) || seenEmails.has(e),
-        );
-        const isDupPhone = c.phones.some(
-            (p) => existingPhones.has(p) || seenPhones.has(p),
-        );
-
-        if (isDupCompany || isDupEmail || isDupPhone) {
-            duplicates++;
-            continue;
-        }
-
-        if (c.companyName) seenCompanies.add(c.companyName);
-        c.emails.forEach((e) => seenEmails.add(e));
-        c.phones.forEach((p) => seenPhones.add(p));
-
-        toInsert.push(c);
-    }
-
-    emitImportProgress(uploadId, {
-        total,
-        processed,
-        percentage: 0,
-        inserted,
-        duplicates,
-        errors,
-        remaining: total,
-        stage: 'inserting',
-    });
-
-    for (let i = 0; i < toInsert.length; i += chunkSize) {
-        const chunk = toInsert.slice(i, i + chunkSize);
-        try {
-            const result = await LeadModel.insertMany(chunk, {
-                ordered: false,
-            });
-            inserted += result.length;
-        } catch (err) {
-            if (err && typeof err === 'object' && 'writeErrors' in err) {
-                const e = err as MongoBulkWriteError;
-                const writeErrors: WriteError[] = Array.isArray(e.writeErrors)
-                    ? e.writeErrors
-                    : [e.writeErrors];
-                errors += writeErrors.length;
-                inserted += chunk.length - writeErrors.length;
-            } else {
-                errors += chunk.length;
-            }
-        }
-
-        processed = Math.min(total, processed + chunk.length);
-        const remaining = Math.max(0, total - processed);
-        const percentage =
-            total === 0 ? 100 : Math.round((processed / total) * 100);
-
-        emitImportProgress(uploadId, {
-            total,
-            processed,
-            percentage,
-            inserted,
-            duplicates,
-            errors,
-            remaining,
-            stage: 'inserting',
-        });
-    }
-
-    emitImportProgress(uploadId, {
-        total,
-        processed: total,
-        percentage: 100,
-        inserted,
-        duplicates,
-        errors,
-        remaining: 0,
-        stage: 'done',
-    });
-
-    return { inserted, duplicates, errors, total };
-}
-
-export async function newLeadsInDB(
-    ownerId: string,
-    lead: IncomingLead,
-): Promise<{
-    inserted: number;
-    updated: number;
-    duplicate: boolean;
-    error: boolean;
-}> {
+    lead: z.infer<typeof newLeadValidation>,
+) {
     try {
-        console.log(lead);
-
-        const dbLead: NewLead = {
-            companyName: lead.companyName?.trim(),
-            websiteUrl: lead.websiteUrl?.trim() || '',
-            emails: (lead.emails ?? []).map((e) => e.trim().toLowerCase()),
-            phones: (lead.phones ?? []).map((p) => p.trim()),
+        const dbLead: Partial<ILead> = {
+            company: {
+                name: lead.company.name.trim(),
+                website: lead.company.website.trim(),
+                emails: (lead.company.emails ?? []).map((e) =>
+                    e.trim().toLowerCase(),
+                ),
+                phones: (lead.company.phones ?? []).map((p) => p.trim()),
+            },
             address: lead.address?.trim() || '',
-            contactPerson: lead.contactPerson,
-            designation: lead.designation?.trim() || '',
-            country: lead.country?.trim() || '',
+            country: lead.country.trim(),
             notes: lead.notes?.trim() || '',
-            status: 'new',
+            contactPersons: (lead.contactPersons ?? []).map((cp) => ({
+                firstName: cp.firstName.trim(),
+                lastName: cp.lastName?.trim() || '',
+                designation: cp.designation?.trim() || '',
+                emails: cp.emails.map((e) => e.trim().toLowerCase()),
+                phones: cp.phones.map((p) => p.trim()),
+            })),
             owner: new Types.ObjectId(ownerId),
-            accessList: [],
-            activities: [],
         };
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const match: any = {
+        const match = {
             owner: new Types.ObjectId(ownerId),
             $or: [
-                { companyName: dbLead.companyName },
-                ...(dbLead.emails.length > 0
-                    ? [{ emails: { $in: dbLead.emails } }]
+                { 'company.name': dbLead.company?.name },
+                ...(dbLead.company?.website
+                    ? [{ 'company.website': dbLead.company.website }]
                     : []),
-                ...(dbLead.phones.length > 0
-                    ? [{ phones: { $in: dbLead.phones } }]
+                ...(dbLead.company?.emails?.length
+                    ? [{ 'company.emails': { $in: dbLead.company.emails } }]
+                    : []),
+                ...(dbLead.company?.phones?.length
+                    ? [{ 'company.phones': { $in: dbLead.company.phones } }]
                     : []),
             ],
         };
@@ -372,13 +229,10 @@ export async function newLeadsInDB(
         );
 
         if (result.upsertedCount && result.upsertedCount > 0) {
-            // New document created
             return { inserted: 1, updated: 0, duplicate: false, error: false };
         } else if (result.modifiedCount && result.modifiedCount > 0) {
-            // Existing doc updated
             return { inserted: 0, updated: 1, duplicate: false, error: false };
         } else {
-            // Nothing inserted/updated → duplicate
             return { inserted: 0, updated: 0, duplicate: true, error: false };
         }
     } catch (err) {
@@ -387,137 +241,183 @@ export async function newLeadsInDB(
     }
 }
 
-export async function assignTelemarketerIntoDB({
-    telemarketerId,
-    assignedBy,
-    leads,
-    totalTarget,
-    deadline,
-}: {
-    telemarketerId: string;
-    assignedBy: string;
-    leads: string[];
-    totalTarget?: number;
-    deadline?: Date;
-}) {
-    const existingLeads = await LeadModel.find({
-        _id: { $in: leads.map((id) => new Types.ObjectId(id)) },
-    });
-    if (existingLeads.length !== leads.length) {
-        throw new Error('Some leads do not exist');
-    }
-
-    await LeadModel.updateMany(
-        { _id: { $in: leads } },
-        {
-            $addToSet: {
-                accessList: {
-                    user: new Types.ObjectId(telemarketerId),
-                    role: 'editor',
-                    grantedBy: new Types.ObjectId(assignedBy),
-                    grantedAt: new Date(),
-                },
-            },
-        },
-    );
-
-    const assignment = await LeadAssignmentModel.create({
-        telemarketer: telemarketerId,
-        assignedBy,
-        leads,
-        totalTarget,
-        deadline,
-        completedCount: 0,
-        completedLeads: [],
-        status: 'active',
-    });
-
-    return assignment;
-}
-
-export async function getAssignmentsForUserFromDB(
+async function updateLeadInDB(
+    id: string,
     userId: string,
-    role?: string,
+    role: string,
+    updates: UpdateLeadInput,
 ) {
-    const query =
-        role === 'admin' || role === 'super-admin'
-            ? {}
-            : { telemarketer: userId };
+    const leadDoc = await LeadModel.findById(id);
+    if (!leadDoc) throw new Error('Lead not found');
 
-    return LeadAssignmentModel.find(query)
-        .populate('leads')
-        .populate('assignedBy', 'firstName lastName email');
-}
+    const lead = leadDoc as typeof leadDoc & ILead;
 
-export async function updateProgress(leadId: string, userId: string) {
-    const assignment = await LeadAssignmentModel.findOne({
-        telemarketer: userId,
-        leads: leadId,
-        status: 'active',
-    });
-
-    if (!assignment) return null;
-
-    if (!assignment.completedLeads) assignment.completedLeads = [];
-    if (assignment.completedLeads.includes(new Types.ObjectId(leadId)))
-        return assignment;
-
-    assignment.completedLeads.push(new Types.ObjectId(leadId));
-    assignment.completedCount = assignment.completedLeads.length;
-
-    if (
-        assignment.totalTarget &&
-        assignment.completedCount >= assignment.totalTarget
-    ) {
-        assignment.status = 'completed';
+    const isOwner = lead.owner.toString() === userId.toString();
+    const isAdmin = ['admin', 'super-admin'].includes(role);
+    if (!isOwner && !isAdmin) {
+        const err = new Error(
+            'Access forbidden: You cannot edit this lead',
+        ) as Error & { status?: number };
+        err.status = 403;
+        throw err;
     }
 
-    await assignment.save();
-    return assignment;
-}
+    const changedFields: string[] = [];
+    const oldLead = lead.toObject() as ILead;
 
-export async function checkAndExpireAssignments() {
-    const now = new Date();
-    return LeadAssignmentModel.updateMany(
-        { deadline: { $lt: now }, status: 'active' },
-        { $set: { status: 'expired' } },
-    );
-}
+    for (const key of Object.keys(updates) as (keyof UpdateLeadInput)[]) {
+        const value = updates[key];
+        if (value === undefined) continue;
 
-export async function updateLeadStatusInDB({
-    leadId,
-    userId,
-    status,
-    note,
-}: {
-    leadId: string;
-    userId: string;
-    status: string;
-    note?: string;
-}) {
-    const lead = await LeadModel.findById(leadId);
-    if (!lead) throw new Error('Lead not found');
+        if (key === 'company' && value) {
+            const newCompany = value as ICompany;
+            const oldCompany = oldLead.company ?? ({} as ICompany);
 
-    lead.status = status as ILead['status'];
+            (Object.keys(newCompany) as (keyof ICompany)[]).forEach((ckey) => {
+                const newVal = newCompany[ckey];
+                const oldVal = oldCompany[ckey];
 
-    lead.activities.push({
-        type: 'status_change',
-        content: `Status changed to ${status}`,
-        byUser: new Types.ObjectId(userId),
-        at: new Date(),
-    });
+                if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+                    changedFields.push(`company.${String(ckey)}`);
+                    (lead.company as ICompany)[ckey] = newVal as never;
+                }
+            });
+        } else if (key === 'contactPersons' && value) {
+            const newContacts = value as IContactPerson[];
+            if (
+                JSON.stringify(oldLead.contactPersons) !==
+                JSON.stringify(newContacts)
+            ) {
+                changedFields.push('contactPersons');
+                lead.contactPersons = [...newContacts];
+            }
+        } else if (key === 'activities') {
+            continue;
+        } else {
+            const oldVal = oldLead[key as keyof ILead];
+            const newVal = value;
+            if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+                changedFields.push(String(key));
+                (lead as unknown as Record<string, unknown>)[key] = newVal;
+            }
+        }
+    }
 
-    if (note) {
-        lead.activities.push({
+    if (changedFields.length > 0) {
+        const activity: IActivity = {
             type: 'note',
-            content: note,
+            outcomeCode: 'archived',
             byUser: new Types.ObjectId(userId),
             at: new Date(),
-        });
+            notes: `Fields updated: ${changedFields.join(', ')}`,
+        };
+
+        if (!Array.isArray(lead.activities)) lead.activities = [];
+        lead.activities.push(activity);
     }
 
     await lead.save();
-    await updateProgress(leadId, userId);
-
     return lead;
 }
+
+async function importLeadsFromData(
+    rows: ParsedRow[],
+    userId: string,
+): Promise<ImportResult> {
+    const result: ImportResult = {
+        total: rows.length,
+        successful: 0,
+        failed: 0,
+        errors: [],
+    };
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNumber = i + 2;
+
+        if (!row) {
+            result.errors.push(`Row ${i + 2}: Empty or undefined row`);
+            result.failed++;
+            continue;
+        }
+
+        try {
+            if (!row.companyName || !row.country) {
+                result.errors.push(
+                    `Row ${rowNumber}: Missing required fields (companyName and country are required)`,
+                );
+                result.failed++;
+                continue;
+            }
+
+            const company = {
+                name: String(row.companyName || ''),
+                website: String(row.website || ''),
+                emails: await parseEmails(row.emails),
+                phones: await parsePhones(row.phones),
+            };
+
+            const contactPersons = await parseContactPersons(row);
+
+            if (contactPersons.length === 0) {
+                result.errors.push(
+                    `Row ${rowNumber}: At least one contact person with email or phone is required`,
+                );
+                result.failed++;
+                continue;
+            }
+
+            const leadData = {
+                company,
+                address: row.address ? String(row.address) : undefined,
+                country: String(row.country),
+                notes: row.notes ? String(row.notes) : undefined,
+                contactPersons,
+                status: (row.status as ILead['status']) || 'new',
+                owner: new Types.ObjectId(userId),
+                activities: [
+                    {
+                        type: 'note' as const,
+                        outcomeCode: 'archived' as const,
+                        byUser: new Types.ObjectId(userId),
+                        at: new Date(),
+                        notes: 'Lead imported via bulk upload',
+                    },
+                ],
+            };
+
+            const existingLead = await LeadModel.findOne({
+                'company.name': company.name,
+                country: leadData.country,
+                owner: userId,
+            });
+
+            if (existingLead) {
+                result.errors.push(
+                    `Row ${rowNumber}: Lead already exists for company "${company.name}" in ${leadData.country}`,
+                );
+                result.failed++;
+                continue;
+            }
+
+            await LeadModel.create(leadData);
+            result.successful++;
+        } catch (error) {
+            result.errors.push(
+                `Row ${rowNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            );
+            result.failed++;
+        }
+    }
+
+    return result;
+}
+
+const LeadService = {
+    newLeadsInDB,
+    getLeadsFromDB,
+    getLeadByIdFromDB,
+    updateLeadInDB,
+    importLeadsFromData,
+};
+export default LeadService;
