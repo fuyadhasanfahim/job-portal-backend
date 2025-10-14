@@ -81,6 +81,75 @@ async function getLeads(req: Request, res: Response) {
     }
 }
 
+async function getLeadsByDate(req: Request, res: Response) {
+    try {
+        const userId = req.auth?.id;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized: Missing user authentication',
+            });
+        }
+
+        const {
+            page = '1',
+            limit = '10',
+            date,
+        } = req.query as Record<string, string>;
+
+        if (!date) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide a date (YYYY-MM-DD)',
+            });
+        }
+
+        // ✅ Convert to date and validate
+        const selectedDate = new Date(date);
+        if (isNaN(selectedDate.getTime())) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid date format. Use YYYY-MM-DD',
+            });
+        }
+
+        const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+        const parsedLimit = Math.min(
+            Math.max(parseInt(limit, 10) || 10, 1),
+            100,
+        );
+
+        // ✅ Normalize the day boundaries
+        const startOfDay = new Date(selectedDate);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(selectedDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const result = await LeadService.getLeadsByDateFromDB({
+            userId,
+            page: parsedPage,
+            limit: parsedLimit,
+            startOfDay,
+            endOfDay,
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Leads fetched successfully',
+            date,
+            data: result.items,
+            pagination: result.pagination,
+        });
+    } catch (error) {
+        console.error('getLeadsByDate error:', error);
+        return res.status(500).json({
+            success: false,
+            message: (error as Error).message || 'Failed to fetch leads',
+        });
+    }
+}
+
 async function getLeadById(req: Request, res: Response) {
     try {
         const { id } = req.params;
@@ -297,6 +366,7 @@ async function importLeads(req: Request, res: Response) {
 const LeadController = {
     newLead,
     getLeads,
+    getLeadsByDate,
     getLeadById,
     updateLead,
     importLeads,

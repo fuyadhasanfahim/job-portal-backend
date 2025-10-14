@@ -134,6 +134,60 @@ async function getLeadsFromDB({
     };
 }
 
+async function getLeadsByDateFromDB({
+    userId,
+    page,
+    limit,
+    startOfDay,
+    endOfDay,
+}: {
+    userId: string;
+    page: number;
+    limit: number;
+    startOfDay: Date;
+    endOfDay: Date;
+}) {
+    const user = await UserModel.findById(userId).lean();
+    if (!user) throw new Error('User not found');
+
+    const query: FilterQuery<ILead> = {
+        createdAt: { $gte: startOfDay, $lte: endOfDay },
+    };
+
+    if (user.role !== 'admin' && user.role !== 'super-admin') {
+        query.owner = new Types.ObjectId(userId);
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+        LeadModel.find(query)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate({
+                path: 'owner',
+                select: 'firstName lastName email role',
+            })
+            .populate({
+                path: 'activities.byUser',
+                select: 'firstName lastName email',
+            })
+            .lean(),
+        LeadModel.countDocuments(query),
+    ]);
+
+    return {
+        items,
+        pagination: {
+            totalItems: total,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
+            limit,
+        },
+    };
+}
+
 async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
     const user = await UserModel.findById(userId).lean();
 
@@ -179,7 +233,7 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
     return lead;
 }
 
-async function newLeadsInDB(
+export async function newLeadsInDB(
     ownerId: string,
     lead: z.infer<typeof newLeadValidation>,
 ) {
@@ -206,38 +260,36 @@ async function newLeadsInDB(
             owner: new Types.ObjectId(ownerId),
         };
 
-        const match = {
+        const existingLead = await LeadModel.findOne({
             owner: new Types.ObjectId(ownerId),
-            $or: [
-                { 'company.name': dbLead.company?.name },
-                ...(dbLead.company?.website
-                    ? [{ 'company.website': dbLead.company.website }]
-                    : []),
-                ...(dbLead.company?.emails?.length
-                    ? [{ 'company.emails': { $in: dbLead.company.emails } }]
-                    : []),
-                ...(dbLead.company?.phones?.length
-                    ? [{ 'company.phones': { $in: dbLead.company.phones } }]
-                    : []),
-            ],
-        };
+            'company.name': dbLead.company?.name,
+            'company.website': dbLead.company?.website,
+        });
 
-        const result = await LeadModel.updateOne(
-            match,
-            { $set: dbLead },
-            { upsert: true },
-        );
-
-        if (result.upsertedCount && result.upsertedCount > 0) {
-            return { inserted: 1, updated: 0, duplicate: false, error: false };
-        } else if (result.modifiedCount && result.modifiedCount > 0) {
-            return { inserted: 0, updated: 1, duplicate: false, error: false };
-        } else {
-            return { inserted: 0, updated: 0, duplicate: true, error: false };
+        if (existingLead) {
+            return {
+                duplicate: true,
+                message:
+                    'Duplicate lead found with same company name & website',
+                lead: existingLead,
+            };
         }
+
+        const newLead = await LeadModel.create(dbLead);
+
+        return {
+            duplicate: false,
+            message: 'Lead created successfully',
+            lead: newLead,
+        };
     } catch (err) {
         console.error('Lead insert error:', err);
-        return { inserted: 0, updated: 0, duplicate: false, error: true };
+        return {
+            success: false,
+            duplicate: false,
+            message: 'Error creating lead',
+            error: err instanceof Error ? err.message : String(err),
+        };
     }
 }
 
@@ -416,6 +468,7 @@ async function importLeadsFromData(
 const LeadService = {
     newLeadsInDB,
     getLeadsFromDB,
+    getLeadsByDateFromDB,
     getLeadByIdFromDB,
     updateLeadInDB,
     importLeadsFromData,
