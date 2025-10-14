@@ -104,7 +104,6 @@ async function getLeadsByDate(req: Request, res: Response) {
             });
         }
 
-        // ✅ Convert to date and validate
         const selectedDate = new Date(date);
         if (isNaN(selectedDate.getTime())) {
             return res.status(400).json({
@@ -119,7 +118,6 @@ async function getLeadsByDate(req: Request, res: Response) {
             100,
         );
 
-        // ✅ Normalize the day boundaries
         const startOfDay = new Date(selectedDate);
         startOfDay.setHours(0, 0, 0, 0);
 
