@@ -3,12 +3,10 @@ import type { Document, Types } from 'mongoose';
 export interface ICompany {
     name: string;
     website: string;
-    emails?: string[];
-    phones?: string[];
 }
 
 export interface IContactPerson {
-    firstName: string;
+    firstName?: string;
     lastName?: string;
     designation?: string;
     emails: string[];

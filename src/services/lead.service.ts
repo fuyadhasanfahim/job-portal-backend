@@ -242,16 +242,12 @@ export async function newLeadsInDB(
             company: {
                 name: lead.company.name.trim(),
                 website: lead.company.website.trim(),
-                emails: (lead.company.emails ?? []).map((e) =>
-                    e.trim().toLowerCase(),
-                ),
-                phones: (lead.company.phones ?? []).map((p) => p.trim()),
             },
             address: lead.address?.trim() || '',
             country: lead.country.trim(),
             notes: lead.notes?.trim() || '',
             contactPersons: (lead.contactPersons ?? []).map((cp) => ({
-                firstName: cp.firstName.trim(),
+                firstName: cp.firstName?.trim() || '',
                 lastName: cp.lastName?.trim() || '',
                 designation: cp.designation?.trim() || '',
                 emails: cp.emails.map((e) => e.trim().toLowerCase()),

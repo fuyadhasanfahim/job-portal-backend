@@ -9,12 +9,10 @@ import type {
 const CompanySchema = new Schema<ICompany>({
     name: { type: String, required: true },
     website: { type: String, required: true },
-    emails: [{ type: String }],
-    phones: [{ type: String }],
 });
 
 const ContactPersonSchema = new Schema<IContactPerson>({
-    firstName: { type: String, required: true },
+    firstName: { type: String },
     lastName: { type: String },
     designation: { type: String },
     emails: [{ type: String, required: true }],

@@ -3,12 +3,10 @@ import { z } from 'zod';
 export const CompanyZ = z.object({
     name: z.string().min(1, 'Company name is required'),
     website: z.url('Invalid website URL').or(z.literal('')),
-    emails: z.array(z.email('Invalid email')).optional(),
-    phones: z.array(z.string().min(5, 'Phone number too short')).optional(),
 });
 
 export const ContactPersonZ = z.object({
-    firstName: z.string().min(1, 'First name is required'),
+    firstName: z.string().optional(),
     lastName: z.string().optional(),
     designation: z.string().optional(),
     emails: z
