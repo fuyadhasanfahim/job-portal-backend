@@ -340,27 +340,12 @@ async function updateTaskWithLeadInDB({
         const newActivity: IActivity = {
             type: activity.type as 'call' | 'email' | 'note' | 'statusChange',
             outcomeCode: activity.outcomeCode as
-                | 'connected'
-                | 'qualified'
-                | 'notQualified'
-                | 'callbackScheduled'
-                | 'needsDecisionMaker'
-                | 'sendInfo'
-                | 'negotiation'
-                | 'won'
-                | 'lost'
+                | 'interestedInfo'
+                | 'interestedQuotation'
                 | 'noAnswer'
-                | 'voicemailLeft'
-                | 'busy'
-                | 'switchedOff'
+                | 'notInterestedNow'
                 | 'invalidNumber'
-                | 'wrongPerson'
-                | 'dnd'
-                | 'followUpScheduled'
-                | 'followUpOverdue'
-                | 'unreachable'
-                | 'duplicate'
-                | 'archived',
+                | 'existingClientFollowUp',
             notes: activity.notes ?? '',
             result: activity.result ?? '',
             byUser: new Types.ObjectId(userId),

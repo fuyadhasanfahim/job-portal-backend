@@ -17,6 +17,7 @@ async function getLeads(req: Request, res: Response) {
             sortBy = 'createdAt',
             sortOrder = 'desc',
             country = '',
+            outcome = '',
         } = req.query as Record<string, string>;
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
@@ -60,6 +61,7 @@ async function getLeads(req: Request, res: Response) {
             sortOrder: validSortOrder,
             userId,
             ...filters,
+            outcome,
         });
 
         return res.status(200).json({

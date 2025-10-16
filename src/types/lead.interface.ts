@@ -15,35 +15,20 @@ export interface IContactPerson {
 
 export interface IActivity {
     outcomeCode:
-        | 'connected'
-        | 'qualified'
-        | 'notQualified'
-        | 'callbackScheduled'
-        | 'needsDecisionMaker'
-        | 'sendInfo'
-        | 'negotiation'
-        | 'won'
-        | 'lost'
+        | 'interestedInfo'
+        | 'interestedQuotation'
         | 'noAnswer'
-        | 'voicemailLeft'
-        | 'busy'
-        | 'switchedOff'
+        | 'notInterestedNow'
         | 'invalidNumber'
-        | 'wrongPerson'
-        | 'dnd'
-        | 'followUpScheduled'
-        | 'followUpOverdue'
-        | 'unreachable'
-        | 'duplicate'
-        | 'archived';
+        | 'existingClientFollowUp'
+        | 'systemUpdate';
 
     nextAction?:
-        | 'scheduleMeeting'
         | 'sendProposal'
         | 'followUp'
         | 'retry'
         | 'enrichContact'
-        | 'markDnc'
+        | 'scheduleMeeting'
         | 'closeLost';
 
     dueAt?: Date;
@@ -57,12 +42,10 @@ export interface IActivity {
     attemptNumber?: number;
     durationSec?: number;
     contactedChannel?: 'phone' | 'sms' | 'whatsapp' | 'email';
-
     type: 'call' | 'email' | 'note' | 'statusChange';
     content?: string;
-    statusFrom?: string;
-    statusTo?: string;
-
+    statusFrom?: ILead['status'];
+    statusTo?: ILead['status'];
     byUser: Types.ObjectId;
     at: Date;
     result?: string;

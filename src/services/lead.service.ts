@@ -29,11 +29,13 @@ async function getLeadsFromDB({
     sortOrder = 'desc',
     country,
     userId,
+    outcome,
 }: {
     page?: number;
     limit?: number;
     search?: string;
     status?: string;
+    outcome?: string;
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     country?: string;
@@ -51,6 +53,10 @@ async function getLeadsFromDB({
 
     if (status && status !== 'all') {
         query.status = status;
+    }
+
+    if (outcome && outcome !== 'all') {
+        query['activities.outcomeCode'] = outcome;
     }
 
     if (country && country !== 'all') {
@@ -354,7 +360,7 @@ async function updateLeadInDB(
     if (changedFields.length > 0) {
         const activity: IActivity = {
             type: 'note',
-            outcomeCode: 'archived',
+            outcomeCode: 'existingClientFollowUp',
             byUser: new Types.ObjectId(userId),
             at: new Date(),
             notes: `Fields updated: ${changedFields.join(', ')}`,

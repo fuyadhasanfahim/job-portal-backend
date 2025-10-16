@@ -24,44 +24,35 @@ const ActivitySchema = new Schema<IActivity>(
         outcomeCode: {
             type: String,
             enum: [
-                'connected',
-                'qualified',
-                'notQualified',
-                'callbackScheduled',
-                'needsDecisionMaker',
-                'sendInfo',
-                'negotiation',
-                'won',
-                'lost',
+                'interestedInfo',
+                'interestedQuotation',
                 'noAnswer',
-                'voicemailLeft',
-                'busy',
-                'switchedOff',
+                'notInterestedNow',
                 'invalidNumber',
-                'wrongPerson',
-                'dnd',
-                'followUpScheduled',
-                'followUpOverdue',
-                'unreachable',
-                'duplicate',
-                'archived',
+                'existingClientFollowUp',
+                'systemUpdate',
             ],
             required: true,
+            trim: true,
         },
+
         nextAction: {
             type: String,
             enum: [
-                'scheduleMeeting',
                 'sendProposal',
                 'followUp',
                 'retry',
                 'enrichContact',
-                'markDnc',
+                'scheduleMeeting',
                 'closeLost',
             ],
+            default: null,
         },
-        dueAt: { type: Date },
-        notes: { type: String },
+
+        dueAt: { type: Date, default: null },
+
+        notes: { type: String, trim: true },
+
         lostReason: {
             type: String,
             enum: [
@@ -71,28 +62,49 @@ const ActivitySchema = new Schema<IActivity>(
                 'competitor',
                 'other',
             ],
+            default: null,
         },
-        attemptNumber: { type: Number },
-        durationSec: { type: Number },
+
+        attemptNumber: { type: Number, default: 1 },
+
+        durationSec: { type: Number, default: 0 },
+
         contactedChannel: {
             type: String,
             enum: ['phone', 'sms', 'whatsapp', 'email'],
+            default: 'phone',
         },
 
         type: {
             type: String,
             enum: ['call', 'email', 'note', 'statusChange'],
             required: true,
+            default: 'call',
         },
-        content: { type: String },
-        statusFrom: { type: String },
-        statusTo: { type: String },
 
-        byUser: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-        at: { type: Date, default: Date.now, required: true },
-        result: { type: String },
+        content: { type: String, trim: true },
+
+        statusFrom: { type: String, trim: true },
+        statusTo: { type: String, trim: true },
+
+        byUser: {
+            type: Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+        },
+
+        at: {
+            type: Date,
+            default: Date.now,
+            required: true,
+        },
+
+        result: { type: String, trim: true },
     },
-    { _id: false },
+    {
+        _id: false,
+        timestamps: false,
+    },
 );
 
 const LeadSchema = new Schema<ILead>(
