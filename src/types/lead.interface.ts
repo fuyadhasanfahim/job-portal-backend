@@ -68,7 +68,8 @@ export interface ILead extends Document {
         | 'proposal'
         | 'won'
         | 'lost'
-        | 'onHold';
+        | 'onHold'
+        | 'archived';
 
     owner: Types.ObjectId;
     activities?: IActivity[];

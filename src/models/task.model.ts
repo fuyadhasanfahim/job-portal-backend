@@ -33,6 +33,12 @@ const TaskSchema = new Schema<ITask>(
             type: Schema.Types.ObjectId,
             ref: 'User',
         },
+        completedLeads: [
+            {
+                type: Schema.Types.ObjectId,
+                ref: 'Lead',
+            },
+        ],
 
         status: {
             type: String,

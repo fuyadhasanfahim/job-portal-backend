@@ -30,6 +30,7 @@ async function getLeadsFromDB({
     country,
     userId,
     outcome,
+    date,
 }: {
     page?: number;
     limit?: number;
@@ -40,6 +41,7 @@ async function getLeadsFromDB({
     sortOrder?: 'asc' | 'desc';
     country?: string;
     userId: string;
+    date?: string | Date;
 }) {
     const query: FilterQuery<ILead> = {};
 
@@ -53,6 +55,16 @@ async function getLeadsFromDB({
 
     if (status && status !== 'all') {
         query.status = status;
+    }
+
+    if (date) {
+        const dayStart = new Date(date);
+        dayStart.setHours(0, 0, 0, 0);
+
+        const dayEnd = new Date(date);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        query.createdAt = { $gte: dayStart, $lte: dayEnd };
     }
 
     if (outcome && outcome !== 'all') {
@@ -432,7 +444,7 @@ async function importLeadsFromData(
                 activities: [
                     {
                         type: 'note' as const,
-                        outcomeCode: 'archived' as const,
+                        outcomeCode: '',
                         byUser: new Types.ObjectId(userId),
                         at: new Date(),
                         notes: 'Lead imported via bulk upload',

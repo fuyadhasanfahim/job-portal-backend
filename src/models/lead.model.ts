@@ -126,6 +126,7 @@ const LeadSchema = new Schema<ILead>(
                 'won',
                 'lost',
                 'onHold',
+                'archived',
             ],
             default: 'new',
         },

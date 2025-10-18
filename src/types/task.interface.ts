@@ -21,6 +21,8 @@ export interface ITask extends Document {
         total?: number;
     };
 
+    completedLeads?: Types.ObjectId[];
+
     createdAt: Date;
     updatedAt: Date;
 }

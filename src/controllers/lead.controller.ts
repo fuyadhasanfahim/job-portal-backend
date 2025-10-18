@@ -18,7 +18,18 @@ async function getLeads(req: Request, res: Response) {
             sortOrder = 'desc',
             country = '',
             outcome = '',
-        } = req.query as Record<string, string>;
+            date = '',
+        } = req.query as {
+            page: string;
+            limit: string;
+            search: string;
+            status: string;
+            sortBy: string;
+            sortOrder: string;
+            country: string;
+            outcome: string;
+            date: string;
+        };
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
         const parsedLimit = Math.min(
@@ -34,12 +45,8 @@ async function getLeads(req: Request, res: Response) {
             });
         }
 
-        const filters: {
-            search?: string;
-            status?: string;
-            country?: string;
-        } = {};
-
+        // --- Filters ---
+        const filters: Record<string, string> = {};
         if (search.trim()) filters.search = search.trim();
         if (status.trim()) filters.status = status.trim();
         if (country.trim()) filters.country = country.trim();
@@ -62,6 +69,7 @@ async function getLeads(req: Request, res: Response) {
             userId,
             ...filters,
             outcome,
+            date,
         });
 
         return res.status(200).json({
