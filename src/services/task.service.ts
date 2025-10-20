@@ -126,22 +126,27 @@ async function getTasksFromDB({
     role: string;
     page: number;
     limit: number;
-    selectedRole?: string;
     selectedUserId?: string;
 }) {
     const skip = (page - 1) * limit;
-    let query: FilterQuery<ITask> = {};
+    const query: FilterQuery<ITask> = {};
 
-    if (
-        role === 'admin' ||
-        (role === 'super-admin' && selectedUserId && selectedUserId !== 'all')
-    ) {
-        query.assignedTo = new Types.ObjectId(selectedUserId);
-    } else {
+    // ✅ Super-admin can view everything or filter by user
+    if (role === 'super-admin') {
+        if (selectedUserId && selectedUserId !== 'all') {
+            query.assignedTo = new Types.ObjectId(selectedUserId);
+        }
+    }
+    // ✅ Admin can view all tasks or filter by user
+    else if (role === 'admin') {
+        if (selectedUserId && selectedUserId !== 'all') {
+            query.assignedTo = new Types.ObjectId(selectedUserId);
+        }
+    }
+    // ✅ Normal users: only their own tasks
+    else {
         const userObjectId = new Types.ObjectId(userId);
-        query = {
-            $or: [{ createdBy: userObjectId }, { assignedTo: userObjectId }],
-        };
+        query.$or = [{ createdBy: userObjectId }, { assignedTo: userObjectId }];
     }
 
     const [items, total] = await Promise.all([
