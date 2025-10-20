@@ -50,10 +50,11 @@ async function getTasks(req: Request, res: Response) {
             });
         }
 
-        const { page = '1', limit = '10' } = req.query as Record<
-            string,
-            string
-        >;
+        const {
+            page = '1',
+            limit = '10',
+            selectedUserId = '',
+        } = req.query as Record<string, string>;
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
         const parsedLimit = Math.min(
@@ -66,6 +67,7 @@ async function getTasks(req: Request, res: Response) {
             role,
             page: parsedPage,
             limit: parsedLimit,
+            selectedUserId,
         });
 
         return res.status(200).json({

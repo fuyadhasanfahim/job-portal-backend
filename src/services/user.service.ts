@@ -1,6 +1,7 @@
 import { compare, hash } from 'bcryptjs';
 import UserModel from '../models/user.model.js';
 import type { IUser } from '../types/user.interface.js';
+import type { FilterQuery } from 'mongoose';
 
 export async function getSignedUserFromDB(id: string) {
     const user = await UserModel.findById(id).select('-password').lean();
@@ -12,8 +13,14 @@ export async function getSignedUserFromDB(id: string) {
     return user;
 }
 
-export async function getAllUsersFromDB() {
-    const users = await UserModel.find().select('-password').lean();
+export async function getAllUsersFromDB({ role }: { role: string }) {
+    const query: FilterQuery<IUser> = {};
+
+    if (role && role !== 'all') {
+        query.role = role;
+    }
+
+    const users = await UserModel.find(query).select('-password').lean();
     return users;
 }
 

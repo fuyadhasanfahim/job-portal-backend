@@ -31,15 +31,17 @@ export async function getSignedUser(req: Request, res: Response) {
 
 export async function getUsers(req: Request, res: Response) {
     try {
-        const role = req.auth?.role;
+        const { role } = req.query;
 
-        if (role !== 'admin' && role !== 'super-admin') {
+        const requestedRole = req.auth?.role;
+
+        if (requestedRole !== 'admin' && requestedRole !== 'super-admin') {
             return res
                 .status(403)
                 .json({ success: false, message: 'Forbidden' });
         }
 
-        const users = await getAllUsersFromDB();
+        const users = await getAllUsersFromDB({ role: role as string });
 
         return res.status(200).json({
             success: true,

@@ -19,6 +19,7 @@ async function getLeads(req: Request, res: Response) {
             country = '',
             outcome = '',
             date = '',
+            selectedUserId,
         } = req.query as {
             page: string;
             limit: string;
@@ -29,6 +30,7 @@ async function getLeads(req: Request, res: Response) {
             country: string;
             outcome: string;
             date: string;
+            selectedUserId: string;
         };
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
@@ -70,6 +72,7 @@ async function getLeads(req: Request, res: Response) {
             ...filters,
             outcome,
             date,
+            selectedUserId,
         });
 
         return res.status(200).json({

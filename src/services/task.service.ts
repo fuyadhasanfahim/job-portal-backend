@@ -120,17 +120,23 @@ async function getTasksFromDB({
     role,
     page,
     limit,
+    selectedUserId,
 }: {
     userId: string;
     role: string;
     page: number;
     limit: number;
+    selectedRole?: string;
+    selectedUserId?: string;
 }) {
     const skip = (page - 1) * limit;
     let query: FilterQuery<ITask> = {};
 
-    if (role === 'admin' || role === 'super-admin') {
-        query = {};
+    if (
+        role === 'admin' ||
+        (role === 'super-admin' && selectedUserId && selectedUserId !== 'all')
+    ) {
+        query.assignedTo = new Types.ObjectId(selectedUserId);
     } else {
         const userObjectId = new Types.ObjectId(userId);
         query = {

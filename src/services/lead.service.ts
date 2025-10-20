@@ -25,12 +25,13 @@ async function getLeadsFromDB({
     limit = 10,
     search,
     status,
+    outcome,
     sortBy = 'createdAt',
     sortOrder = 'desc',
     country,
     userId,
-    outcome,
     date,
+    selectedUserId,
 }: {
     page?: number;
     limit?: number;
@@ -42,14 +43,20 @@ async function getLeadsFromDB({
     country?: string;
     userId: string;
     date?: string | Date;
+    selectedUserId?: string;
 }) {
     const query: FilterQuery<ILead> = {};
 
     const user = await UserModel.findById(userId).lean();
-
     if (!user) throw new Error('User not found');
 
-    if (user.role !== 'admin' && user.role !== 'super-admin') {
+    if (
+        (user.role === 'admin' || user.role === 'super-admin') &&
+        selectedUserId &&
+        selectedUserId !== 'all'
+    ) {
+        query.owner = new Types.ObjectId(selectedUserId);
+    } else if (user.role !== 'admin' && user.role !== 'super-admin') {
         query.owner = new Types.ObjectId(userId);
     }
 
@@ -137,7 +144,6 @@ async function getLeadsFromDB({
                 select: 'firstName lastName email',
             })
             .lean(),
-
         LeadModel.countDocuments(query),
     ]);
 
