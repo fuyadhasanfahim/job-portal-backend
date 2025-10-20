@@ -2,7 +2,7 @@ import { Types, type FilterQuery } from 'mongoose';
 import TaskModel from '../models/task.model.js';
 import LeadModel from '../models/lead.model.js';
 import type { ITask } from '../types/task.interface.js';
-import type { IActivity } from '../types/lead.interface.js';
+import type { IActivity, ILead } from '../types/lead.interface.js';
 
 async function createTaskInDB({
     title,
@@ -223,6 +223,14 @@ async function getTaskByIdFromDB({
             updatedAt: 1,
         });
 
+    for (const lead of leads) {
+        if (Array.isArray(lead.activities)) {
+            lead.activities.sort(
+                (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+            );
+        }
+    }
+
     return {
         success: true,
         statusCode: 200,
@@ -244,11 +252,11 @@ async function updateTaskWithLeadInDB({
     taskId: string;
     leadId: string;
     taskUpdates?: {
-        status?: string;
+        status?: ITask['status'];
         metrics?: { done?: number; total?: number };
         progress?: number;
     };
-    leadUpdates?: Record<string, string>;
+    leadUpdates?: Partial<ILead>;
     activity?: Partial<IActivity>;
     userId: string;
     role: string;
@@ -261,7 +269,7 @@ async function updateTaskWithLeadInDB({
         };
     }
 
-    const task = await TaskModel.findById(taskId);
+    const task = await TaskModel.findById(taskId).lean();
     if (!task) {
         return {
             success: false,
@@ -283,59 +291,130 @@ async function updateTaskWithLeadInDB({
         };
     }
 
-    // ✅ Ensure completedLeads exists
-    if (!Array.isArray(task.completedLeads)) task.completedLeads = [];
+    const freshTask = await TaskModel.findById(taskId)
+        .select(
+            'completedLeads metrics quantity leads status startedAt finishedAt',
+        )
+        .lean();
 
-    const leadIdStr = leadId.toString();
-    const completedIds = new Set(
-        task.completedLeads.map((id) => id.toString()),
-    );
-
-    // ✅ Check if this lead was already counted
-    const leadAlreadyCounted = completedIds.has(leadIdStr);
-
-    // ✅ Always use fixed total
-    const total =
-        task.metrics?.total ?? task.quantity ?? task.leads?.length ?? 1;
-
-    // ✅ Update progress only once per unique lead
-    if (!leadAlreadyCounted) {
-        completedIds.add(leadIdStr);
-        task.completedLeads = Array.from(completedIds).map(
-            (id) => new Types.ObjectId(id),
-        );
-
-        const done = task.completedLeads.length;
-        const progress = Math.min(100, Math.round((done / total) * 100));
-
-        task.metrics = { done, total };
-        task.progress = progress;
-
-        // Status logic
-        if (progress >= 100) {
-            task.status = 'completed';
-            task.finishedAt = new Date();
-        } else if (task.status === 'pending') {
-            task.status = 'in_progress';
-            if (!task.startedAt) task.startedAt = new Date();
-        }
-    } else if (taskUpdates) {
-        // ✅ Apply only explicit updates, not duplicate increments
-        const { status, metrics, progress } = taskUpdates;
-        if (status) task.status = status as ITask['status'];
-        if (metrics) {
-            task.metrics = {
-                done: task.metrics?.done ?? 0,
-                total,
-                ...metrics,
-            };
-        }
-        if (typeof progress === 'number') task.progress = progress;
+    if (!freshTask) {
+        return {
+            success: false,
+            statusCode: 500,
+            message: 'Unexpected error: task data missing',
+        };
     }
 
-    await task.save();
+    const completedLeads = new Set(
+        (freshTask.completedLeads || []).map((id) => id.toString()),
+    );
+    const leadIdStr = leadId.toString();
+    const leadAlreadyCounted = completedLeads.has(leadIdStr);
 
-    // --- Lead Update ---
+    const total = Math.max(
+        freshTask.quantity ||
+            freshTask.leads?.length ||
+            freshTask.metrics?.total ||
+            1,
+    );
+
+    let updatedCompletedLeadsCount = completedLeads.size;
+
+    if (!leadAlreadyCounted) {
+        updatedCompletedLeadsCount += 1;
+    }
+
+    const done = Math.min(updatedCompletedLeadsCount, total);
+
+    const progress = Math.min(100, Math.round((done / total) * 100));
+
+    let shouldUpdateTask = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const taskUpdatePayload: any = {};
+
+    if (!leadAlreadyCounted) {
+        taskUpdatePayload.$addToSet = {
+            completedLeads: new Types.ObjectId(leadId),
+        };
+        shouldUpdateTask = true;
+    }
+
+    const currentMetrics = freshTask.metrics || {};
+    const currentDone = currentMetrics.done || 0;
+    const currentTotal = currentMetrics.total || total;
+    const currentProgress = freshTask.progress || 0;
+
+    if (
+        done !== currentDone ||
+        total !== currentTotal ||
+        progress !== currentProgress
+    ) {
+        taskUpdatePayload.$set = {
+            ...taskUpdatePayload.$set,
+            'metrics.done': done,
+            'metrics.total': total,
+            progress,
+        };
+        shouldUpdateTask = true;
+    }
+
+    const isNowComplete = progress >= 100;
+    const isStarting = freshTask.status === 'pending' && !freshTask.startedAt;
+    const currentStatus = freshTask.status;
+
+    if (isNowComplete && currentStatus !== 'completed') {
+        taskUpdatePayload.$set = {
+            ...taskUpdatePayload.$set,
+            status: 'completed',
+            finishedAt: new Date(),
+        };
+        shouldUpdateTask = true;
+    } else if (isStarting) {
+        taskUpdatePayload.$set = {
+            ...taskUpdatePayload.$set,
+            status: 'in_progress',
+            startedAt: new Date(),
+        };
+        shouldUpdateTask = true;
+    } else if (!isNowComplete && currentStatus === 'completed') {
+        taskUpdatePayload.$set = {
+            ...taskUpdatePayload.$set,
+            status: 'in_progress',
+            finishedAt: null,
+        };
+        shouldUpdateTask = true;
+    }
+
+    if (shouldUpdateTask && Object.keys(taskUpdatePayload).length > 0) {
+        await TaskModel.findByIdAndUpdate(taskId, taskUpdatePayload);
+    }
+
+    if (taskUpdates) {
+        const manualUpdatePayload: Partial<ITask> = {};
+
+        if (taskUpdates.status) manualUpdatePayload.status = taskUpdates.status;
+
+        if (taskUpdates.metrics) {
+            manualUpdatePayload.metrics = {
+                done: Math.min(taskUpdates.metrics.done ?? done, total),
+                total: Math.max(taskUpdates.metrics.total ?? total, 1),
+            };
+        }
+
+        if (typeof taskUpdates.progress === 'number') {
+            manualUpdatePayload.progress = Math.min(
+                100,
+                Math.max(0, taskUpdates.progress),
+            );
+        }
+
+        if (Object.keys(manualUpdatePayload).length > 0) {
+            await TaskModel.findByIdAndUpdate(taskId, {
+                $set: manualUpdatePayload,
+            });
+        }
+    }
+
     const lead = await LeadModel.findById(leadId);
     if (!lead) {
         return {
@@ -346,26 +425,16 @@ async function updateTaskWithLeadInDB({
     }
 
     if (leadUpdates) {
-        const { status, ...rest } = leadUpdates;
-        if (status)
-            lead.status = status as
-                | 'new'
-                | 'contacted'
-                | 'responded'
-                | 'qualified'
-                | 'meetingScheduled'
-                | 'proposal'
-                | 'won'
-                | 'lost'
-                | 'onHold'
-                | 'archived';
-        Object.assign(lead, rest);
+        if (leadUpdates.status) {
+            lead.status = leadUpdates.status;
+        }
+        Object.assign(lead, leadUpdates);
     }
 
-    if (activity) {
+    if (activity?.type && activity?.outcomeCode) {
         const newActivity: IActivity = {
-            type: activity.type as IActivity['type'],
-            outcomeCode: activity.outcomeCode as IActivity['outcomeCode'],
+            type: activity.type,
+            outcomeCode: activity.outcomeCode,
             notes: activity.notes ?? '',
             result: activity.result ?? '',
             byUser: new Types.ObjectId(userId),
@@ -384,8 +453,12 @@ async function updateTaskWithLeadInDB({
         message: leadAlreadyCounted
             ? 'Lead updated (progress unchanged)'
             : 'Task progress increased and lead updated successfully',
-        task,
-        lead,
+        data: {
+            progress,
+            completedLeads: done,
+            totalLeads: total,
+            wasNewCompletion: !leadAlreadyCounted,
+        },
     };
 }
 
