@@ -6,127 +6,77 @@ import type {
     ILead,
 } from '../types/lead.interface.js';
 
-const CompanySchema = new Schema<ICompany>({
-    name: { type: String, required: true },
-    website: { type: String, required: true },
-});
+const CompanySchema = new Schema<ICompany>(
+    {
+        name: { type: String, required: true, trim: true },
+        website: { type: String, trim: true },
+    },
+    { _id: false },
+);
 
-const ContactPersonSchema = new Schema<IContactPerson>({
-    firstName: { type: String },
-    lastName: { type: String },
-    designation: { type: String },
-    emails: [{ type: String, required: true }],
-    phones: [{ type: String, required: true }],
-});
+const ContactPersonSchema = new Schema<IContactPerson>(
+    {
+        firstName: { type: String, trim: true },
+        lastName: { type: String, trim: true },
+        designation: { type: String, trim: true },
+        emails: [{ type: String, required: true, trim: true }],
+        phones: [{ type: String, required: true, trim: true }],
+    },
+    { _id: false },
+);
 
 const ActivitySchema = new Schema<IActivity>(
     {
-        outcomeCode: {
+        status: {
             type: String,
             enum: [
-                'interestedInfo',
-                'interestedQuotation',
-                'noAnswer',
-                'notInterestedNow',
-                'invalidNumber',
-                'existingClientFollowUp',
-                'systemUpdate',
+                'all',
+                'new',
+                'busy',
+                'answering-machine',
+                'interested',
+                'not-interested',
+                'test-trial',
+                'call-back',
+                'on-board',
+                'invalid-number',
             ],
             required: true,
             trim: true,
         },
-
+        notes: { type: String, trim: true },
         nextAction: {
             type: String,
-            enum: [
-                'sendProposal',
-                'followUp',
-                'retry',
-                'enrichContact',
-                'scheduleMeeting',
-                'closeLost',
-            ],
+            enum: ['follow-up', 'send-proposal', 'call-back', 'close'],
             default: null,
         },
-
         dueAt: { type: Date, default: null },
-
-        notes: { type: String, trim: true },
-
-        lostReason: {
-            type: String,
-            enum: [
-                'noBudget',
-                'notInterested',
-                'timing',
-                'competitor',
-                'other',
-            ],
-            default: null,
-        },
-
-        attemptNumber: { type: Number, default: 1 },
-
-        durationSec: { type: Number, default: 0 },
-
-        contactedChannel: {
-            type: String,
-            enum: ['phone', 'sms', 'whatsapp', 'email'],
-            default: 'phone',
-        },
-
-        type: {
-            type: String,
-            enum: ['call', 'email', 'note', 'statusChange'],
-            required: true,
-            default: 'call',
-        },
-
-        content: { type: String, trim: true },
-
-        statusFrom: { type: String, trim: true },
-        statusTo: { type: String, trim: true },
-
-        byUser: {
-            type: Schema.Types.ObjectId,
-            ref: 'User',
-            required: true,
-        },
-
-        at: {
-            type: Date,
-            default: Date.now,
-            required: true,
-        },
-
-        result: { type: String, trim: true },
+        byUser: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+        at: { type: Date, default: Date.now },
     },
-    {
-        _id: false,
-        timestamps: false,
-    },
+    { _id: false },
 );
 
 const LeadSchema = new Schema<ILead>(
     {
         company: { type: CompanySchema, required: true },
-        address: { type: String },
-        country: { type: String, required: true },
-        notes: { type: String },
+        address: { type: String, trim: true },
+        country: { type: String, required: true, trim: true },
+        notes: { type: String, trim: true },
         contactPersons: { type: [ContactPersonSchema], required: true },
         status: {
             type: String,
             enum: [
+                'all',
                 'new',
-                'contacted',
-                'responded',
-                'qualified',
-                'meetingScheduled',
-                'proposal',
-                'won',
-                'lost',
-                'onHold',
-                'archived',
+                'busy',
+                'answering-machine',
+                'interested',
+                'not-interested',
+                'test-trial',
+                'call-back',
+                'on-board',
+                'invalid-number',
             ],
             default: 'new',
         },

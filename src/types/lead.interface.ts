@@ -13,42 +13,25 @@ export interface IContactPerson {
     phones: string[];
 }
 
+export type LeadStatus =
+    | 'all'
+    | 'new'
+    | 'busy'
+    | 'answering-machine'
+    | 'interested'
+    | 'not-interested'
+    | 'test-trial'
+    | 'call-back'
+    | 'on-board'
+    | 'invalid-number';
+
 export interface IActivity {
-    outcomeCode:
-        | 'interestedInfo'
-        | 'interestedQuotation'
-        | 'noAnswer'
-        | 'notInterestedNow'
-        | 'invalidNumber'
-        | 'existingClientFollowUp'
-        | 'systemUpdate';
-
-    nextAction?:
-        | 'sendProposal'
-        | 'followUp'
-        | 'retry'
-        | 'enrichContact'
-        | 'scheduleMeeting'
-        | 'closeLost';
-
-    dueAt?: Date;
+    status: LeadStatus;
     notes?: string;
-    lostReason?:
-        | 'noBudget'
-        | 'notInterested'
-        | 'timing'
-        | 'competitor'
-        | 'other';
-    attemptNumber?: number;
-    durationSec?: number;
-    contactedChannel?: 'phone' | 'sms' | 'whatsapp' | 'email';
-    type: 'call' | 'email' | 'note' | 'statusChange';
-    content?: string;
-    statusFrom?: ILead['status'];
-    statusTo?: ILead['status'];
+    nextAction?: 'follow-up' | 'send-proposal' | 'call-back' | 'close';
+    dueAt?: Date;
     byUser: Types.ObjectId;
     at: Date;
-    result?: string;
 }
 
 export interface ILead extends Document {
@@ -58,18 +41,7 @@ export interface ILead extends Document {
     notes?: string;
 
     contactPersons: IContactPerson[];
-
-    status:
-        | 'new'
-        | 'contacted'
-        | 'responded'
-        | 'qualified'
-        | 'meetingScheduled'
-        | 'proposal'
-        | 'won'
-        | 'lost'
-        | 'onHold'
-        | 'archived';
+    status: LeadStatus;
 
     owner: Types.ObjectId;
     activities?: IActivity[];

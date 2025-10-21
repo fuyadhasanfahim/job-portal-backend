@@ -1,3 +1,4 @@
+import { Types, type FilterQuery } from 'mongoose';
 import LeadModel from '../models/lead.model.js';
 import UserModel from '../models/user.model.js';
 import type {
@@ -6,7 +7,6 @@ import type {
     IContactPerson,
     ILead,
 } from '../types/lead.interface.js';
-import { Types, type FilterQuery } from 'mongoose';
 import type {
     newLeadValidation,
     UpdateLeadInput,
@@ -14,8 +14,6 @@ import type {
 import type z from 'zod';
 import {
     parseContactPersons,
-    parseEmails,
-    parsePhones,
     type ImportResult,
     type ParsedRow,
 } from '../helpers/fileParser.js';
@@ -25,7 +23,6 @@ async function getLeadsFromDB({
     limit = 10,
     search,
     status,
-    outcome,
     sortBy = 'createdAt',
     sortOrder = 'desc',
     country,
@@ -37,7 +34,6 @@ async function getLeadsFromDB({
     limit?: number;
     search?: string;
     status?: string;
-    outcome?: string;
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     country?: string;
@@ -53,7 +49,7 @@ async function getLeadsFromDB({
     if (
         (user.role === 'admin' || user.role === 'super-admin') &&
         selectedUserId &&
-        selectedUserId !== 'all'
+        selectedUserId !== 'all-user'
     ) {
         query.owner = new Types.ObjectId(selectedUserId);
     } else if (user.role !== 'admin' && user.role !== 'super-admin') {
@@ -67,15 +63,9 @@ async function getLeadsFromDB({
     if (date) {
         const dayStart = new Date(date);
         dayStart.setHours(0, 0, 0, 0);
-
         const dayEnd = new Date(date);
         dayEnd.setHours(23, 59, 59, 999);
-
         query.createdAt = { $gte: dayStart, $lte: dayEnd };
-    }
-
-    if (outcome && outcome !== 'all') {
-        query['activities.outcomeCode'] = outcome;
     }
 
     if (country && country !== 'all') {
@@ -90,8 +80,6 @@ async function getLeadsFromDB({
             query.$or = [
                 { 'company.name': regex },
                 { 'company.website': regex },
-                { 'company.emails': { $elemMatch: { $regex: regex } } },
-                { 'company.phones': { $elemMatch: { $regex: regex } } },
                 { notes: regex },
                 {
                     $and: [
@@ -114,8 +102,6 @@ async function getLeadsFromDB({
             query.$or = [
                 { 'company.name': regex },
                 { 'company.website': regex },
-                { 'company.emails': { $elemMatch: { $regex: regex } } },
-                { 'company.phones': { $elemMatch: { $regex: regex } } },
                 { notes: regex },
                 { 'contactPersons.firstName': regex },
                 { 'contactPersons.lastName': regex },
@@ -146,6 +132,14 @@ async function getLeadsFromDB({
             .lean(),
         LeadModel.countDocuments(query),
     ]);
+
+    for (const lead of items) {
+        if (Array.isArray(lead.activities)) {
+            lead.activities.sort(
+                (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+            );
+        }
+    }
 
     return {
         items,
@@ -214,10 +208,7 @@ async function getLeadsByDateFromDB({
 
 async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
     const user = await UserModel.findById(userId).lean();
-
-    if (!user) {
-        throw new Error('User not found');
-    }
+    if (!user) throw new Error('User not found');
 
     const lead = await LeadModel.findById(id)
         .populate({
@@ -228,12 +219,9 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
             path: 'activities.byUser',
             select: 'firstName lastName email',
         })
-        .sort({ createdAt: -1 })
         .lean();
 
-    if (!lead) {
-        return null;
-    }
+    if (!lead) return null;
 
     if (lead.activities) {
         lead.activities.sort(
@@ -242,9 +230,7 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
     }
 
     const isAdmin = userRole === 'admin' || userRole === 'super-admin';
-
-    const isOwner =
-        lead.owner && lead.owner._id?.toString() === userId.toString();
+    const isOwner = lead.owner && lead.owner._id?.toString() === userId;
 
     if (!isAdmin && !isOwner) {
         const err = new Error('Access forbidden') as Error & {
@@ -265,7 +251,7 @@ export async function newLeadsInDB(
         const dbLead: Partial<ILead> = {
             company: {
                 name: lead.company.name.trim(),
-                website: lead.company.website.trim(),
+                website: lead.company.website?.trim() || '',
             },
             address: lead.address?.trim() || '',
             country: lead.country.trim(),
@@ -344,11 +330,9 @@ async function updateLeadInDB(
         if (key === 'company' && value) {
             const newCompany = value as ICompany;
             const oldCompany = oldLead.company ?? ({} as ICompany);
-
             (Object.keys(newCompany) as (keyof ICompany)[]).forEach((ckey) => {
                 const newVal = newCompany[ckey];
                 const oldVal = oldCompany[ckey];
-
                 if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
                     changedFields.push(`company.${String(ckey)}`);
                     (lead.company as ICompany)[ckey] = newVal as never;
@@ -363,8 +347,6 @@ async function updateLeadInDB(
                 changedFields.push('contactPersons');
                 lead.contactPersons = [...newContacts];
             }
-        } else if (key === 'activities') {
-            continue;
         } else {
             const oldVal = oldLead[key as keyof ILead];
             const newVal = value;
@@ -377,8 +359,7 @@ async function updateLeadInDB(
 
     if (changedFields.length > 0) {
         const activity: IActivity = {
-            type: 'note',
-            outcomeCode: 'existingClientFollowUp',
+            status: lead.status,
             byUser: new Types.ObjectId(userId),
             at: new Date(),
             notes: `Fields updated: ${changedFields.join(', ')}`,
@@ -407,16 +388,10 @@ async function importLeadsFromData(
         const row = rows[i];
         const rowNumber = i + 2;
 
-        if (!row) {
-            result.errors.push(`Row ${i + 2}: Empty or undefined row`);
-            result.failed++;
-            continue;
-        }
-
         try {
-            if (!row.companyName || !row.country) {
+            if (!row?.companyName || !row.country) {
                 result.errors.push(
-                    `Row ${rowNumber}: Missing required fields (companyName and country are required)`,
+                    `Row ${rowNumber}: Missing required fields (companyName and country)`,
                 );
                 result.failed++;
                 continue;
@@ -425,32 +400,28 @@ async function importLeadsFromData(
             const company = {
                 name: String(row.companyName || ''),
                 website: String(row.website || ''),
-                emails: await parseEmails(row.emails),
-                phones: await parsePhones(row.phones),
             };
 
             const contactPersons = await parseContactPersons(row);
-
             if (contactPersons.length === 0) {
                 result.errors.push(
-                    `Row ${rowNumber}: At least one contact person with email or phone is required`,
+                    `Row ${rowNumber}: No valid contact persons found.`,
                 );
                 result.failed++;
                 continue;
             }
 
-            const leadData = {
+            const leadData: Partial<ILead> = {
                 company,
-                address: row.address ? String(row.address) : undefined,
+                address: row.address ? String(row.address) : '',
                 country: String(row.country),
-                notes: row.notes ? String(row.notes) : undefined,
+                notes: row.notes ? String(row.notes) : '',
                 contactPersons,
                 status: (row.status as ILead['status']) || 'new',
                 owner: new Types.ObjectId(userId),
                 activities: [
                     {
-                        type: 'note' as const,
-                        outcomeCode: '',
+                        status: 'new',
                         byUser: new Types.ObjectId(userId),
                         at: new Date(),
                         notes: 'Lead imported via bulk upload',
@@ -476,7 +447,9 @@ async function importLeadsFromData(
             result.successful++;
         } catch (error) {
             result.errors.push(
-                `Row ${rowNumber}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                `Row ${rowNumber}: ${
+                    error instanceof Error ? error.message : 'Unknown error'
+                }`,
             );
             result.failed++;
         }
@@ -493,4 +466,5 @@ const LeadService = {
     updateLeadInDB,
     importLeadsFromData,
 };
+
 export default LeadService;

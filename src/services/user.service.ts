@@ -13,11 +13,23 @@ export async function getSignedUserFromDB(id: string) {
     return user;
 }
 
-export async function getAllUsersFromDB({ role }: { role: string }) {
+export async function getAllUsersFromDB({
+    role,
+    includeAdmins = false,
+}: {
+    role: string;
+    includeAdmins?: boolean;
+}) {
     const query: FilterQuery<IUser> = {};
 
-    if (role && role !== 'all') {
+    if (role && role !== 'all-role') {
         query.role = role;
+    }
+
+    if (!includeAdmins) {
+        query.role = query.role
+            ? { $eq: query.role, $nin: ['admin', 'super-admin'] }
+            : { $nin: ['admin', 'super-admin'] };
     }
 
     const users = await UserModel.find(query).select('-password').lean();

@@ -31,7 +31,10 @@ export async function getSignedUser(req: Request, res: Response) {
 
 export async function getUsers(req: Request, res: Response) {
     try {
-        const { role } = req.query;
+        const { role, includeAdmins } = req.query as Record<
+            string,
+            string | boolean
+        >;
 
         const requestedRole = req.auth?.role;
 
@@ -41,7 +44,10 @@ export async function getUsers(req: Request, res: Response) {
                 .json({ success: false, message: 'Forbidden' });
         }
 
-        const users = await getAllUsersFromDB({ role: role as string });
+        const users = await getAllUsersFromDB({
+            role: role as string,
+            includeAdmins: includeAdmins as boolean,
+        });
 
         return res.status(200).json({
             success: true,

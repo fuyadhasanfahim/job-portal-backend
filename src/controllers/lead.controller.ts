@@ -17,7 +17,6 @@ async function getLeads(req: Request, res: Response) {
             sortBy = 'createdAt',
             sortOrder = 'desc',
             country = '',
-            outcome = '',
             date = '',
             selectedUserId,
         } = req.query as {
@@ -47,7 +46,6 @@ async function getLeads(req: Request, res: Response) {
             });
         }
 
-        // --- Filters ---
         const filters: Record<string, string> = {};
         if (search.trim()) filters.search = search.trim();
         if (status.trim()) filters.status = status.trim();
@@ -70,7 +68,6 @@ async function getLeads(req: Request, res: Response) {
             sortOrder: validSortOrder,
             userId,
             ...filters,
-            outcome,
             date,
             selectedUserId,
         });
