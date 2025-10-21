@@ -29,7 +29,7 @@ export interface IActivity {
     status: LeadStatus;
     notes?: string;
     nextAction?: 'follow-up' | 'send-proposal' | 'call-back' | 'close';
-    dueAt?: Date;
+    dueAt?: Date | undefined;
     byUser: Types.ObjectId;
     at: Date;
 }

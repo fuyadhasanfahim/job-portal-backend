@@ -1,4 +1,4 @@
-import { Types, type FilterQuery } from 'mongoose';
+import { Types, type FilterQuery, type UpdateQuery } from 'mongoose';
 import TaskModel from '../models/task.model.js';
 import LeadModel from '../models/lead.model.js';
 import type { ITask } from '../types/task.interface.js';
@@ -121,32 +121,33 @@ async function getTasksFromDB({
     page,
     limit,
     selectedUserId,
+    status,
 }: {
     userId: string;
     role: string;
     page: number;
     limit: number;
     selectedUserId?: string;
+    status?: string;
 }) {
     const skip = (page - 1) * limit;
     const query: FilterQuery<ITask> = {};
 
-    // ✅ Super-admin can view everything or filter by user
     if (role === 'super-admin') {
         if (selectedUserId && selectedUserId !== 'all') {
             query.assignedTo = new Types.ObjectId(selectedUserId);
         }
-    }
-    // ✅ Admin can view all tasks or filter by user
-    else if (role === 'admin') {
+    } else if (role === 'admin') {
         if (selectedUserId && selectedUserId !== 'all') {
             query.assignedTo = new Types.ObjectId(selectedUserId);
         }
-    }
-    // ✅ Normal users: only their own tasks
-    else {
+    } else {
         const userObjectId = new Types.ObjectId(userId);
         query.$or = [{ createdBy: userObjectId }, { assignedTo: userObjectId }];
+    }
+
+    if (status && status !== 'all') {
+        query.status = status;
     }
 
     const [items, total] = await Promise.all([
@@ -298,7 +299,7 @@ async function updateTaskWithLeadInDB({
 
     const freshTask = await TaskModel.findById(taskId)
         .select(
-            'completedLeads metrics quantity leads status startedAt finishedAt',
+            'completedLeads metrics quantity leads status startedAt finishedAt progress',
         )
         .lean();
 
@@ -324,18 +325,13 @@ async function updateTaskWithLeadInDB({
     );
 
     let updatedCompletedLeadsCount = completedLeads.size;
-
-    if (!leadAlreadyCounted) {
-        updatedCompletedLeadsCount += 1;
-    }
+    if (!leadAlreadyCounted) updatedCompletedLeadsCount += 1;
 
     const done = Math.min(updatedCompletedLeadsCount, total);
-
     const progress = Math.min(100, Math.round((done / total) * 100));
 
     let shouldUpdateTask = false;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const taskUpdatePayload: any = {};
+    const taskUpdatePayload: UpdateQuery<ITask> = {};
 
     if (!leadAlreadyCounted) {
         taskUpdatePayload.$addToSet = {
@@ -395,28 +391,31 @@ async function updateTaskWithLeadInDB({
     }
 
     if (taskUpdates) {
-        const manualUpdatePayload: Partial<ITask> = {};
+        const manualUpdatePayload: UpdateQuery<ITask> = { $set: {} };
 
-        if (taskUpdates.status) manualUpdatePayload.status = taskUpdates.status;
+        if (taskUpdates.status)
+            manualUpdatePayload.$set!.status = taskUpdates.status;
 
         if (taskUpdates.metrics) {
-            manualUpdatePayload.metrics = {
-                done: Math.min(taskUpdates.metrics.done ?? done, total),
-                total: Math.max(taskUpdates.metrics.total ?? total, 1),
-            };
+            manualUpdatePayload.$set!['metrics.done'] = Math.min(
+                taskUpdates.metrics.done ?? done,
+                total,
+            );
+            manualUpdatePayload.$set!['metrics.total'] = Math.max(
+                taskUpdates.metrics.total ?? total,
+                1,
+            );
         }
 
         if (typeof taskUpdates.progress === 'number') {
-            manualUpdatePayload.progress = Math.min(
+            manualUpdatePayload.$set!.progress = Math.min(
                 100,
                 Math.max(0, taskUpdates.progress),
             );
         }
 
-        if (Object.keys(manualUpdatePayload).length > 0) {
-            await TaskModel.findByIdAndUpdate(taskId, {
-                $set: manualUpdatePayload,
-            });
+        if (Object.keys(manualUpdatePayload.$set!).length > 0) {
+            await TaskModel.findByIdAndUpdate(taskId, manualUpdatePayload);
         }
     }
 
@@ -430,24 +429,27 @@ async function updateTaskWithLeadInDB({
     }
 
     if (leadUpdates) {
-        if (leadUpdates.status) {
-            lead.status = leadUpdates.status;
-        }
         Object.assign(lead, leadUpdates);
     }
 
-    if (activity?.type && activity?.outcomeCode) {
+    if (activity && activity.status) {
         const newActivity: IActivity = {
-            type: activity.type,
-            outcomeCode: activity.outcomeCode,
+            status: activity.status,
             notes: activity.notes ?? '',
-            result: activity.result ?? '',
+            nextAction: activity.nextAction as
+                | 'close'
+                | 'call-back'
+                | 'follow-up'
+                | 'send-proposal',
+            dueAt: activity.dueAt ?? undefined,
             byUser: new Types.ObjectId(userId),
             at: new Date(),
         };
 
         if (!Array.isArray(lead.activities)) lead.activities = [];
         lead.activities.push(newActivity);
+
+        lead.status = activity.status;
     }
 
     await lead.save();
