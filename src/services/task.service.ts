@@ -122,6 +122,7 @@ async function getTasksFromDB({
     limit,
     selectedUserId,
     status,
+    date,
 }: {
     userId: string;
     role: string;
@@ -129,6 +130,7 @@ async function getTasksFromDB({
     limit: number;
     selectedUserId?: string;
     status?: string;
+    date?: string | Date;
 }) {
     const skip = (page - 1) * limit;
     const query: FilterQuery<ITask> = {};
@@ -148,6 +150,14 @@ async function getTasksFromDB({
 
     if (status && status !== 'all') {
         query.status = status;
+    }
+
+    if (date) {
+        const dayStart = new Date(date);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(date);
+        dayEnd.setHours(23, 59, 59, 999);
+        query.createdAt = { $gte: dayStart, $lte: dayEnd };
     }
 
     const [items, total] = await Promise.all([
@@ -456,7 +466,6 @@ async function updateTaskWithLeadInDB({
 
     return {
         success: true,
-        statusCode: 200,
         message: leadAlreadyCounted
             ? 'Lead updated (progress unchanged)'
             : 'Task progress increased and lead updated successfully',

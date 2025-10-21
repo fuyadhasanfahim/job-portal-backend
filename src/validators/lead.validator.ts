@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 export const CompanyZ = z.object({
     name: z.string().min(1, 'Company name is required'),
-    website: z.url('Invalid website URL').or(z.literal('')),
+    website: z
+        .string()
+        .url('Invalid website URL')
+        .or(z.literal(''))
+        .optional()
+        .default(''),
 });
 
 export const ContactPersonZ = z.object({
@@ -10,48 +15,32 @@ export const ContactPersonZ = z.object({
     lastName: z.string().optional(),
     designation: z.string().optional(),
     emails: z
-        .array(z.email('Invalid email'))
-        .min(1, 'At least one email required'),
+        .array(z.string().email('Invalid email'))
+        .min(1, 'At least one email is required'),
     phones: z
         .array(z.string().min(7, 'Phone number too short'))
-        .min(1, 'At least one phone required'),
+        .min(1, 'At least one phone number is required'),
 });
 
 export const ActivityZ = z.object({
-    outcomeCode: z.enum([
-        'interestedInfo',
-        'interestedQuotation',
-        'noAnswer',
-        'notInterestedNow',
-        'invalidNumber',
-        'existingClientFollowUp',
-        'systemUpdate',
+    status: z.enum([
+        'new',
+        'busy',
+        'answering-machine',
+        'interested',
+        'not-interested',
+        'test-trial',
+        'call-back',
+        'on-board',
+        'invalid-number',
     ]),
+    notes: z.string().optional(),
     nextAction: z
-        .enum([
-            'sendProposal',
-            'followUp',
-            'retry',
-            'enrichContact',
-            'scheduleMeeting',
-            'closeLost',
-        ])
+        .enum(['follow-up', 'send-proposal', 'call-back', 'close'])
         .optional(),
     dueAt: z.coerce.date().optional(),
-    notes: z.string().optional(),
-    lostReason: z
-        .enum(['noBudget', 'notInterested', 'timing', 'competitor', 'other'])
-        .optional(),
-    attemptNumber: z.number().optional(),
-    durationSec: z.number().optional(),
-    contactedChannel: z.enum(['phone', 'sms', 'whatsapp', 'email']).optional(),
-    type: z.enum(['call', 'email', 'note', 'statusChange']),
-    content: z.string().optional(),
-    statusFrom: z.string().optional(),
-    statusTo: z.string().optional(),
     byUser: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid user ObjectId'),
     at: z.coerce.date().default(() => new Date()),
-    result: z.string().optional(),
 });
 
 export const newLeadValidation = z.object({
@@ -73,15 +62,14 @@ export const updateLeadValidation = z.object({
     status: z
         .enum([
             'new',
-            'contacted',
-            'responded',
-            'qualified',
-            'meetingScheduled',
-            'proposal',
-            'won',
-            'lost',
-            'onHold',
-            'archived',
+            'busy',
+            'answering-machine',
+            'interested',
+            'not-interested',
+            'test-trial',
+            'call-back',
+            'on-board',
+            'invalid-number',
         ])
         .optional(),
     owner: z.string().optional(),

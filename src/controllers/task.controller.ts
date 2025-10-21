@@ -55,11 +55,12 @@ async function getTasks(req: Request, res: Response) {
             limit = '10',
             selectedUserId = '',
             status = 'all',
-        } = req.query as Record<string, string>;
+            date,
+        } = req.query;
 
-        const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+        const parsedPage = Math.max(parseInt(page as string, 10) || 1, 1);
         const parsedLimit = Math.min(
-            Math.max(parseInt(limit, 10) || 10, 1),
+            Math.max(parseInt(limit as string, 10) || 10, 1),
             100,
         );
 
@@ -68,8 +69,9 @@ async function getTasks(req: Request, res: Response) {
             role,
             page: parsedPage,
             limit: parsedLimit,
-            selectedUserId,
-            status,
+            selectedUserId: selectedUserId as string,
+            status: status as string,
+            date: date as string,
         });
 
         return res.status(200).json({
@@ -149,7 +151,7 @@ async function updateTaskWithLead(req: Request, res: Response) {
             role,
         });
 
-        return res.status(result.statusCode).json(result);
+        return res.status(200).json(result);
     } catch (error) {
         console.error('Update task + lead error:', error);
         return res.status(500).json({
