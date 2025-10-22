@@ -281,7 +281,17 @@ export async function newLeadsInDB(
             };
         }
 
-        const newLead = await LeadModel.create(dbLead);
+        const newLead = await LeadModel.create({
+            ...dbLead,
+            activities: [
+                {
+                    status: 'new',
+                    notes: 'Lead created',
+                    byUser: new Types.ObjectId(ownerId),
+                    at: new Date(),
+                },
+            ],
+        });
 
         return {
             duplicate: false,

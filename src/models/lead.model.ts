@@ -43,6 +43,7 @@ const ActivitySchema = new Schema<IActivity>(
             ],
             required: true,
             trim: true,
+            default: 'new',
         },
         notes: { type: String, trim: true },
         nextAction: {
