@@ -15,7 +15,7 @@ export const ContactPersonZ = z.object({
     lastName: z.string().optional(),
     designation: z.string().optional(),
     emails: z
-        .array(z.string().email('Invalid email'))
+        .array(z.email('Invalid email'))
         .min(1, 'At least one email is required'),
     phones: z
         .array(z.string().min(7, 'Phone number too short'))
@@ -51,6 +51,46 @@ export const newLeadValidation = z.object({
     address: z.string().optional(),
     country: z.string().min(1, 'Country is required'),
     notes: z.string().optional(),
+    status: z.enum([
+        'new',
+        'busy',
+        'answering-machine',
+        'interested',
+        'not-interested',
+        'test-trial',
+        'call-back',
+        'on-board',
+        'no-answer',
+        'email/whatsApp-sent',
+        'language-barrier',
+        'invalid-number',
+    ]),
+    activities: z
+        .array(
+            z.object({
+                status: z.enum([
+                    'new',
+                    'busy',
+                    'answering-machine',
+                    'interested',
+                    'not-interested',
+                    'test-trial',
+                    'call-back',
+                    'on-board',
+                    'no-answer',
+                    'email/whatsApp-sent',
+                    'language-barrier',
+                    'invalid-number',
+                ]),
+                notes: z.string().optional(),
+                nextAction: z
+                    .enum(['follow-up', 'send-proposal', 'call-back', 'close'])
+                    .optional(),
+                dueAt: z.coerce.date().optional(),
+                at: z.coerce.date().default(() => new Date()),
+            }),
+        )
+        .optional(),
     contactPersons: z
         .array(ContactPersonZ)
         .min(1, 'At least one contact person is required'),

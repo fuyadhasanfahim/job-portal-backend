@@ -31,7 +31,7 @@ export type LeadStatus =
 export interface IActivity {
     status: LeadStatus;
     notes?: string;
-    nextAction?: 'follow-up' | 'send-proposal' | 'call-back' | 'close';
+    nextAction?: 'follow-up' | 'send-proposal' | 'call-back' | 'close' | undefined;
     dueAt?: Date | undefined;
     byUser: Types.ObjectId;
     at: Date;

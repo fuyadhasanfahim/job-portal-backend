@@ -243,7 +243,7 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
     return lead;
 }
 
-export async function newLeadsInDB(
+async function newLeadsInDB(
     ownerId: string,
     lead: z.infer<typeof newLeadValidation>,
 ) {
@@ -263,6 +263,15 @@ export async function newLeadsInDB(
                 emails: cp.emails.map((e) => e.trim().toLowerCase()),
                 phones: cp.phones.map((p) => p.trim()),
             })),
+            status: lead.status,
+            activities: (lead.activities ?? []).map((activity) => ({
+                status: lead.status,
+                notes: lead.notes?.trim() || '',
+                nextAction: activity.nextAction ?? undefined,
+                dueAt: activity.dueAt,
+                byUser: new Types.ObjectId(ownerId),
+                at: activity.at || new Date(),
+            })),
             owner: new Types.ObjectId(ownerId),
         };
 
@@ -274,6 +283,7 @@ export async function newLeadsInDB(
 
         if (existingLead) {
             return {
+                success: true,
                 duplicate: true,
                 message:
                     'Duplicate lead found with same company name & website',
@@ -283,19 +293,21 @@ export async function newLeadsInDB(
 
         const newLead = await LeadModel.create({
             ...dbLead,
-            activities: [
-                {
-                    status: 'new',
-                    notes: 'Lead created',
-                    byUser: new Types.ObjectId(ownerId),
-                    at: new Date(),
-                },
-            ],
+            activities:
+                dbLead.activities && dbLead.activities.length > 0
+                    ? dbLead.activities
+                    : [
+                          {
+                              status: 'new',
+                              notes: 'Lead created',
+                              byUser: new Types.ObjectId(ownerId),
+                              at: new Date(),
+                          },
+                      ],
         });
 
         return {
             duplicate: false,
-            message: 'Lead created successfully',
             lead: newLead,
         };
     } catch (err) {
