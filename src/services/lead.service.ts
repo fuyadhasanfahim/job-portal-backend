@@ -17,6 +17,7 @@ import {
     type ImportResult,
     type ParsedRow,
 } from '../helpers/fileParser.js';
+import TaskModel from '../models/task.model.js';
 
 async function getLeadsFromDB({
     page = 1,
@@ -305,6 +306,55 @@ async function newLeadsInDB(
                           },
                       ],
         });
+
+        const system = await UserModel.findOne({
+            email: 'system@webbriks.com',
+        });
+
+        if (lead.status !== 'new' && system) {
+            const startOfDay = new Date();
+            startOfDay.setHours(0, 0, 0, 0);
+
+            const endOfDay = new Date();
+            endOfDay.setHours(23, 59, 59, 999);
+
+            const existingTask = await TaskModel.findOne({
+                assignedTo: new Types.ObjectId(ownerId),
+                createdBy: new Types.ObjectId(system._id),
+                type: 'cold_call',
+                createdAt: { $gte: startOfDay, $lte: endOfDay },
+            });
+
+            if (existingTask) {
+                const newLeadId = newLead._id as Types.ObjectId;
+                existingTask.leads = existingTask.leads ?? [];
+                if (
+                    !existingTask.leads.some((id: unknown) =>
+                        (id as Types.ObjectId).equals(newLeadId),
+                    )
+                ) {
+                    (existingTask.leads as Types.ObjectId[]).push(newLeadId);
+                }
+
+                const totalLeads = existingTask.leads.length;
+                existingTask.metrics = { done: totalLeads, total: totalLeads };
+                existingTask.progress = 100;
+
+                await existingTask.save();
+            } else {
+                await TaskModel.create({
+                    title: `System Task: ${new Date().toLocaleDateString()}`,
+                    description: `Auto-created task for leads created today with non-"new" status.`,
+                    type: 'cold_call',
+                    createdBy: new Types.ObjectId(system._id),
+                    assignedTo: new Types.ObjectId(ownerId),
+                    status: 'in_progress',
+                    leads: [newLead._id],
+                    progress: 100,
+                    metrics: { done: 1, total: 1 },
+                });
+            }
+        }
 
         return {
             duplicate: false,

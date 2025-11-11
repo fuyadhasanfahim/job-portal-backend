@@ -8,7 +8,7 @@ const TaskSchema = new Schema<ITask>(
 
         type: {
             type: String,
-            enum: ['lead_generation'],
+            enum: ['cold_call'],
             required: true,
         },
 

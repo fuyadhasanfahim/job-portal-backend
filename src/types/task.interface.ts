@@ -3,7 +3,7 @@ import { Document, Types } from 'mongoose';
 export interface ITask extends Document {
     title?: string;
     description?: string;
-    type: 'lead_generation';
+    type: 'cold_call';
     quantity?: number;
     leads?: Types.ObjectId[];
 
