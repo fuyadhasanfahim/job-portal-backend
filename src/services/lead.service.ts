@@ -18,6 +18,7 @@ import {
     type ParsedRow,
 } from '../helpers/fileParser.js';
 import TaskModel from '../models/task.model.js';
+import { createLog } from '../utils/logger.js';
 
 async function getLeadsFromDB({
     page = 1,
@@ -142,6 +143,19 @@ async function getLeadsFromDB({
         }
     }
 
+    await createLog({
+        userId,
+        action: 'fetch_leads_list',
+        entityType: 'lead',
+        description: `Fetched leads (filters: ${JSON.stringify({
+            status,
+            search,
+            country,
+            date,
+            selectedUserId,
+        })})`,
+    });
+
     return {
         items,
         pagination: {
@@ -196,6 +210,13 @@ async function getLeadsByDateFromDB({
         LeadModel.countDocuments(query),
     ]);
 
+    await createLog({
+        userId,
+        action: 'fetch_leads_by_date',
+        entityType: 'lead',
+        description: `Fetched leads created between ${startOfDay.toISOString()} - ${endOfDay.toISOString()}`,
+    });
+
     return {
         items,
         pagination: {
@@ -240,6 +261,14 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
         err.status = 403;
         throw err;
     }
+
+    await createLog({
+        userId,
+        action: 'view_lead_details',
+        entityType: 'lead',
+        entityId: id,
+        description: `User ${user.email} viewed lead "${lead.company?.name}"`,
+    });
 
     return lead;
 }
@@ -307,6 +336,15 @@ async function newLeadsInDB(
                       ],
         });
 
+        await createLog({
+            userId: ownerId,
+            action: 'create_lead',
+            entityType: 'lead',
+            entityId: newLead._id as string,
+            description: `Lead "${lead.company.name}" created with status "${lead.status}".`,
+            data: { country: lead.country, status: lead.status },
+        });
+
         const system = await UserModel.findOne({
             email: 'system@webbriks.com',
         });
@@ -341,8 +379,17 @@ async function newLeadsInDB(
                 existingTask.progress = 100;
 
                 await existingTask.save();
+
+                await createLog({
+                    userId: system._id.toString(),
+                    action: 'system_task_update',
+                    entityType: 'task',
+                    entityId: existingTask._id as string,
+                    description: `Added new lead "${lead.company.name}" to today's system task.`,
+                    data: { ownerId, leadId: newLead._id as string },
+                });
             } else {
-                await TaskModel.create({
+                const task = await TaskModel.create({
                     title: `System Task: ${new Date().toLocaleDateString()}`,
                     description: `Auto-created task for leads created today with non-"new" status.`,
                     type: 'cold_call',
@@ -352,6 +399,14 @@ async function newLeadsInDB(
                     leads: [newLead._id],
                     progress: 100,
                     metrics: { done: 1, total: 1 },
+                });
+
+                await createLog({
+                    userId: system._id.toString(),
+                    action: 'system_task_create',
+                    entityType: 'task',
+                    entityId: task._id as string,
+                    description: `Created a new daily system task for user ${ownerId}.`,
                 });
             }
         }
@@ -442,6 +497,16 @@ async function updateLeadInDB(
     }
 
     await lead.save();
+
+    await createLog({
+        userId,
+        action: 'update_lead',
+        entityType: 'lead',
+        entityId: id,
+        description: `Lead "${lead.company?.name}" updated. Fields changed: ${changedFields.join(', ')}`,
+        data: { changedFields },
+    });
+
     return lead;
 }
 
@@ -526,6 +591,14 @@ async function importLeadsFromData(
             result.failed++;
         }
     }
+
+    await createLog({
+        userId,
+        action: 'bulk_import_leads',
+        entityType: 'lead',
+        description: `Bulk imported ${result.successful}/${result.total} leads.`,
+        data: result,
+    });
 
     return result;
 }

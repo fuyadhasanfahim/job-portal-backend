@@ -3,6 +3,7 @@ import TaskModel from '../models/task.model.js';
 import LeadModel from '../models/lead.model.js';
 import type { ITask } from '../types/task.interface.js';
 import type { IActivity, ILead } from '../types/lead.interface.js';
+import { createLog } from '../utils/logger.js';
 
 async function createTaskInDB({
     title,
@@ -51,6 +52,20 @@ async function createTaskInDB({
             metrics: {
                 done: 0,
                 total: totalQty,
+            },
+        });
+
+        await createLog({
+            userId: userId,
+            action: 'create_task',
+            entityType: 'task',
+            entityId: task._id as string,
+            description: `Task "${title}" created by ${role} and assigned to user ${assignedTo || userId}`,
+            data: {
+                type,
+                leadsCount: formattedLeads.length,
+                assignedTo,
+                createdBy: userId,
             },
         });
 
@@ -171,6 +186,19 @@ async function getTasksFromDB({
         TaskModel.countDocuments(query),
     ]);
 
+    await createLog({
+        userId,
+        action: 'fetch_task_list',
+        entityType: 'task',
+        description: `Fetched task list (role: ${role}, filters: ${JSON.stringify(
+            {
+                selectedUserId,
+                status,
+                date,
+            },
+        )})`,
+    });
+
     return {
         items,
         pagination: {
@@ -246,6 +274,14 @@ async function getTaskByIdFromDB({
             );
         }
     }
+
+    await createLog({
+        userId,
+        action: 'view_task',
+        entityType: 'task',
+        entityId: taskId,
+        description: `User ${userId} viewed task "${task.title}"`,
+    });
 
     return {
         success: true,
@@ -463,6 +499,22 @@ async function updateTaskWithLeadInDB({
     }
 
     await lead.save();
+
+    await createLog({
+        userId,
+        action: 'update_task_progress',
+        entityType: 'task',
+        entityId: taskId,
+        description: `Lead "${lead.company?.name || leadId}" updated in task "${taskId}" — new progress ${progress}%`,
+        data: {
+            progress,
+            done,
+            total,
+            leadId,
+            leadStatus: lead.status,
+            activity: activity || null,
+        },
+    });
 
     return {
         success: true,

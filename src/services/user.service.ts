@@ -2,6 +2,7 @@ import { compare, hash } from 'bcryptjs';
 import UserModel from '../models/user.model.js';
 import type { IUser } from '../types/user.interface.js';
 import type { FilterQuery } from 'mongoose';
+import { createLog } from '../utils/logger.js';
 
 export async function getSignedUserFromDB(id: string) {
     const user = await UserModel.findById(id).select('-password').lean();
@@ -33,13 +34,29 @@ export async function getAllUsersFromDB({
     }
 
     const users = await UserModel.find(query).select('-password').lean();
+
     return users;
 }
 
 export async function updateUserInDB(id: string, data: Partial<IUser>) {
+    const userBefore = await UserModel.findById(id).lean();
     const user = await UserModel.findByIdAndUpdate(id, data, { new: true })
         .select('-password')
         .lean();
+
+    if (user) {
+        await createLog({
+            userId: id,
+            action: 'update_user',
+            entityType: 'user',
+            entityId: id,
+            description: `User ${user.email} profile updated.`,
+            data: {
+                before: userBefore,
+                after: user,
+            },
+        });
+    }
 
     return user;
 }
@@ -65,6 +82,14 @@ export async function updatePasswordInDB(
 
     user.password = hashedPassword;
     await user.save();
+
+    await createLog({
+        userId: id,
+        action: 'change_password',
+        entityType: 'user',
+        entityId: id,
+        description: `User ${user.email} changed their password.`,
+    });
 
     return user;
 }

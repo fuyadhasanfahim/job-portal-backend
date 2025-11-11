@@ -4,6 +4,7 @@ import { authRoute } from './auth.route.js';
 import { leadRoute } from './lead.route.js';
 import { countryRoute } from './country.route.js';
 import { taskRoute } from './task.route.js';
+import { logRoute } from './log.route.js';
 
 const router: Router = Router();
 
@@ -27,6 +28,10 @@ const moduleRoutes = [
     {
         path: '/tasks',
         route: taskRoute,
+    },
+    {
+        path: '/logs',
+        route: logRoute,
     },
 ];
 

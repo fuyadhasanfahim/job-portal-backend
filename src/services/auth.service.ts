@@ -11,6 +11,7 @@ import {
 import { hashToken, verifyTokenHash } from '../utils/hash.js';
 import RefreshTokenModel from '../models/RefreshToken.model.js';
 import { addMs } from '../utils/time.js';
+import { createLog } from '../utils/logger.js';
 
 export async function signupService({
     firstName,
@@ -47,6 +48,14 @@ export async function signupService({
         password: hashedPassword,
     });
 
+    await createLog({
+        userId: newUser._id.toString(),
+        action: 'user_signup',
+        entityType: 'user',
+        entityId: newUser._id as string,
+        description: `${newUser.email} signed up with role "${newUser.role}".`,
+    });
+
     return newUser;
 }
 
@@ -74,6 +83,16 @@ export async function signinService(
         ip: meta.ip,
         revoked: false,
         expiresAt: addMs(new Date(), env.refresh_expires),
+    });
+
+    await createLog({
+        userId: user._id.toString(),
+        action: 'user_login',
+        entityType: 'user',
+        entityId: user._id as string,
+        description: `${user.email} logged in successfully.`,
+        ip: meta.ip ?? '',
+        userAgent: meta.userAgent ?? '',
     });
 
     return { access, refresh, user };
@@ -137,6 +156,16 @@ export async function rotateRefreshToken(
         expiresAt: addMs(new Date(), env.refresh_expires),
     });
 
+    await createLog({
+        userId: payload.sub,
+        action: 'token_rotated',
+        entityType: 'system',
+        entityId: stored._id.toString(),
+        description: `Refresh token rotated for user ${payload.sub}`,
+        ip: meta.ip ?? '',
+        ...(meta.userAgent && { userAgent: meta.userAgent }),
+    });
+
     return { newAccess, newRefresh };
 }
 
@@ -150,4 +179,12 @@ export async function revokeRefreshToken(refreshToken: string) {
         { userId: payload.sub, jti: payload.jti },
         { $set: { revoked: true } },
     );
+
+    await createLog({
+        userId: payload.sub,
+        action: 'token_revoked',
+        entityType: 'system',
+        entityId: payload.jti,
+        description: `Refresh token revoked for user ${payload.sub}`,
+    });
 }
