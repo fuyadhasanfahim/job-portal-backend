@@ -77,7 +77,7 @@ async function createTaskInDB({
         };
     }
 
-    if (type === 'lead_generation') {
+    if (type === 'cold_call') {
         if (!formattedLeads.length) {
             return {
                 success: false,
