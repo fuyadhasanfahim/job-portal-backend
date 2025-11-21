@@ -212,12 +212,13 @@ async function newLead(req: Request, res: Response) {
 
         const parsed = newLeadValidation.parse(req.body);
 
-        await LeadService.newLeadsInDB(ownerId, parsed);
+        const result = await LeadService.newLeadsInDB(ownerId, parsed);
 
-        return res.status(201).json({
-            success: true,
-            message: 'Lead created successfully',
-        });
+        if (result.duplicate) {
+            return res.status(200).json(result);
+        }
+
+        return res.status(201).json(result);
     } catch (error) {
         console.error('New lead error:', error);
         return res

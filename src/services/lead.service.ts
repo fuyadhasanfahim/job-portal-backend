@@ -306,9 +306,10 @@ async function newLeadsInDB(
         };
 
         const existingLead = await LeadModel.findOne({
-            owner: new Types.ObjectId(ownerId),
-            'company.name': dbLead.company?.name,
-            'company.website': dbLead.company?.website,
+            $or: [
+                { 'company.name': dbLead.company?.name },
+                { 'company.website': dbLead.company?.website },
+            ],
         });
 
         if (existingLead) {
@@ -316,7 +317,7 @@ async function newLeadsInDB(
                 success: true,
                 duplicate: true,
                 message:
-                    'Duplicate lead found with same company name & website',
+                    'Duplicate lead found with same company name or website',
                 lead: existingLead,
             };
         }
