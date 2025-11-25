@@ -414,6 +414,7 @@ async function newLeadsInDB(
 
         return {
             duplicate: false,
+            success: true,
             lead: newLead,
         };
     } catch (err) {
