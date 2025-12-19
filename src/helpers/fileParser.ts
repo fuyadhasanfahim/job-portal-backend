@@ -143,3 +143,173 @@ export async function parseContactPersons(
 
     return contactPersons;
 }
+
+// Schema validation types
+export interface SchemaValidationError {
+    type: 'missing_required' | 'missing_contact' | 'invalid_column';
+    column?: string;
+    message: string;
+}
+
+export interface SchemaValidationResult {
+    valid: boolean;
+    errors: SchemaValidationError[];
+    warnings: string[];
+    detectedColumns: string[];
+    expectedColumns: {
+        required: string[];
+        contactRequired: string[];
+        optional: string[];
+    };
+}
+
+// Required columns for lead import
+const REQUIRED_COLUMNS = ['companyName', 'country'];
+const CONTACT_COLUMNS = ['contactEmail', 'contactPhone']; // At least one required
+const OPTIONAL_COLUMNS = [
+    'website',
+    'address',
+    'notes',
+    'status',
+    'contactFirstName',
+    'contactLastName',
+    'contactDesignation',
+    'additionalContacts',
+];
+
+/**
+ * Validates if the parsed file has the required columns for lead import
+ */
+export function validateImportSchema(rows: ParsedRow[]): SchemaValidationResult {
+    const result: SchemaValidationResult = {
+        valid: true,
+        errors: [],
+        warnings: [],
+        detectedColumns: [],
+        expectedColumns: {
+            required: REQUIRED_COLUMNS,
+            contactRequired: CONTACT_COLUMNS,
+            optional: OPTIONAL_COLUMNS,
+        },
+    };
+
+    if (rows.length === 0) {
+        result.valid = false;
+        result.errors.push({
+            type: 'missing_required',
+            message: 'The file is empty or has no data rows.',
+        });
+        return result;
+    }
+
+    // Get columns from first row
+    const firstRow = rows[0];
+    if (!firstRow) {
+        result.valid = false;
+        result.errors.push({
+            type: 'missing_required',
+            message: 'Could not read file headers.',
+        });
+        return result;
+    }
+
+    const detectedColumns = Object.keys(firstRow);
+    result.detectedColumns = detectedColumns;
+
+    // Normalize column names for comparison (case-insensitive, trim whitespace)
+    const normalizedColumns = detectedColumns.map((col) =>
+        col.toLowerCase().trim().replace(/\s+/g, '')
+    );
+
+    // Check required columns
+    for (const required of REQUIRED_COLUMNS) {
+        const normalizedRequired = required.toLowerCase();
+        if (!normalizedColumns.includes(normalizedRequired)) {
+            result.valid = false;
+            result.errors.push({
+                type: 'missing_required',
+                column: required,
+                message: `Missing required column: "${required}"`,
+            });
+        }
+    }
+
+    // Check if at least one contact column exists
+    const hasContactColumn = CONTACT_COLUMNS.some((col) =>
+        normalizedColumns.includes(col.toLowerCase())
+    );
+
+    if (!hasContactColumn) {
+        result.valid = false;
+        result.errors.push({
+            type: 'missing_contact',
+            message: `At least one contact column is required: "${CONTACT_COLUMNS.join('" or "')}"`,
+        });
+    }
+
+    // Check for unknown columns (warnings only)
+    const allKnownColumns = [
+        ...REQUIRED_COLUMNS,
+        ...CONTACT_COLUMNS,
+        ...OPTIONAL_COLUMNS,
+    ].map((c) => c.toLowerCase());
+
+    for (const col of detectedColumns) {
+        const normalizedCol = col.toLowerCase().trim().replace(/\s+/g, '');
+        if (!allKnownColumns.includes(normalizedCol)) {
+            result.warnings.push(
+                `Unknown column "${col}" will be ignored during import.`
+            );
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Validates individual row data
+ */
+export interface RowValidationError {
+    row: number;
+    field: string;
+    message: string;
+}
+
+export function validateRowData(
+    row: ParsedRow,
+    rowIndex: number
+): RowValidationError[] {
+    const errors: RowValidationError[] = [];
+    const rowNumber = rowIndex + 2; // +2 because index is 0-based and we skip header row
+
+    // Check required fields have values
+    if (!row.companyName || String(row.companyName).trim() === '') {
+        errors.push({
+            row: rowNumber,
+            field: 'companyName',
+            message: `Row ${rowNumber}: Company name is required`,
+        });
+    }
+
+    if (!row.country || String(row.country).trim() === '') {
+        errors.push({
+            row: rowNumber,
+            field: 'country',
+            message: `Row ${rowNumber}: Country is required`,
+        });
+    }
+
+    // Check at least one contact method
+    const hasEmail = row.contactEmail && String(row.contactEmail).trim() !== '';
+    const hasPhone = row.contactPhone && String(row.contactPhone).trim() !== '';
+
+    if (!hasEmail && !hasPhone) {
+        errors.push({
+            row: rowNumber,
+            field: 'contact',
+            message: `Row ${rowNumber}: At least one contact email or phone is required`,
+        });
+    }
+
+    return errors;
+}

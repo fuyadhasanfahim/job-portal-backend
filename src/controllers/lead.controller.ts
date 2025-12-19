@@ -5,7 +5,7 @@ import {
     updateLeadValidation,
 } from '../validators/lead.validator.js';
 import z from 'zod';
-import { parseCSV, parseExcel, type ParsedRow } from '../helpers/fileParser.js';
+import { parseCSV, parseExcel, validateImportSchema, validateRowData, type ParsedRow, type SchemaValidationResult, type RowValidationError } from '../helpers/fileParser.js';
 
 async function getLeads(req: Request, res: Response) {
     try {
@@ -303,66 +303,123 @@ async function importLeads(req: Request, res: Response) {
             });
         }
 
-        const results = {
-            total: 0,
-            successful: 0,
-            failed: 0,
-            errors: [] as string[],
-        };
+        const file = files[0];
+        if (!file) {
+            return res.status(400).json({
+                success: false,
+                message: 'No file provided',
+            });
+        }
 
-        // Process each file
-        for (const file of files) {
-            try {
-                let parsedData: ParsedRow[];
+        // Parse the file first
+        let parsedData: ParsedRow[];
 
-                if (
-                    file.mimetype === 'text/csv' ||
-                    file.originalname.endsWith('.csv')
-                ) {
-                    parsedData = await parseCSV(file.path);
-                } else if (
-                    file.mimetype ===
-                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-                    file.originalname.endsWith('.xlsx') ||
-                    file.originalname.endsWith('.xls')
-                ) {
-                    parsedData = await parseExcel(file.path);
-                } else {
-                    results.errors.push(
-                        `Unsupported file type: ${file.originalname}`,
-                    );
-                    continue;
-                }
+        try {
+            if (
+                file.mimetype === 'text/csv' ||
+                file.originalname.endsWith('.csv')
+            ) {
+                parsedData = await parseCSV(file.path);
+            } else if (
+                file.mimetype ===
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                file.originalname.endsWith('.xlsx') ||
+                file.originalname.endsWith('.xls')
+            ) {
+                parsedData = await parseExcel(file.path);
+            } else {
+                return res.status(400).json({
+                    success: false,
+                    message: `Unsupported file type: ${file.originalname}. Please upload a CSV or Excel file.`,
+                });
+            }
+        } catch (parseError) {
+            return res.status(400).json({
+                success: false,
+                message: `Error parsing file: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
+            });
+        }
 
-                if (parsedData.length === 0) {
-                    results.errors.push(
-                        `No data found in file: ${file.originalname}`,
-                    );
-                    continue;
-                }
+        if (parsedData.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'The file is empty or contains no data rows.',
+            });
+        }
 
-                // Process leads from this file
-                const fileResults = await LeadService.importLeadsFromData(
-                    parsedData,
-                    userId,
-                );
+        // Validate schema/columns first
+        const schemaValidation: SchemaValidationResult = validateImportSchema(parsedData);
 
-                results.total += fileResults.total;
-                results.successful += fileResults.successful;
-                results.failed += fileResults.failed;
-                results.errors.push(...fileResults.errors);
-            } catch (error) {
-                results.errors.push(
-                    `Error processing file ${file.originalname}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                );
+        if (!schemaValidation.valid) {
+            return res.status(400).json({
+                success: false,
+                message: 'File structure does not match the expected format.',
+                validationErrors: schemaValidation.errors,
+                warnings: schemaValidation.warnings,
+                detectedColumns: schemaValidation.detectedColumns,
+                expectedColumns: schemaValidation.expectedColumns,
+            });
+        }
+
+        // Validate individual rows and collect errors
+        const rowErrors: RowValidationError[] = [];
+        const validRows: ParsedRow[] = [];
+        const invalidRowIndices = new Set<number>(); // Track unique invalid rows
+
+        for (let i = 0; i < parsedData.length; i++) {
+            const row = parsedData[i];
+            if (!row) continue;
+
+            const errors = validateRowData(row, i);
+            if (errors.length > 0) {
+                rowErrors.push(...errors);
+                invalidRowIndices.add(i); // Track this row as invalid
+            } else {
+                validRows.push(row);
             }
         }
+
+        // If all rows are invalid, return error
+        if (validRows.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No valid rows found in the file. All rows have validation errors.',
+                rowErrors: rowErrors.slice(0, 50), // Limit to first 50 errors
+                totalRowErrors: rowErrors.length,
+                warnings: schemaValidation.warnings,
+            });
+        }
+
+        // Process valid leads
+        const importResult = await LeadService.importLeadsFromData(
+            validRows,
+            userId,
+        );
+
+        // Combine row validation errors with import errors
+        const allErrors = [
+            ...rowErrors.map((e) => e.message),
+            ...importResult.errors,
+        ];
+
+        // Calculate correct counts
+        const skippedRowCount = invalidRowIndices.size; // Unique invalid rows count
 
         res.status(200).json({
             success: true,
             message: 'Leads import completed',
-            results,
+            results: {
+                total: parsedData.length,
+                validRows: validRows.length,
+                successful: importResult.successful,
+                duplicates: importResult.failed,
+                skippedRows: skippedRowCount, // Fixed: count unique rows, not errors
+                errors: allErrors.slice(0, 100), // Limit errors in response
+                totalErrors: allErrors.length,
+            },
+            warnings: schemaValidation.warnings,
         });
+
     } catch (error) {
         console.error('Error importing leads:', error);
         res.status(500).json({
@@ -371,6 +428,7 @@ async function importLeads(req: Request, res: Response) {
         });
     }
 }
+
 
 const LeadController = {
     newLead,
