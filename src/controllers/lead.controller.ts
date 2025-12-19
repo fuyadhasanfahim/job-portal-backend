@@ -430,6 +430,94 @@ async function importLeads(req: Request, res: Response) {
 }
 
 
+async function searchLeadByCompany(req: Request, res: Response) {
+    try {
+        const { name, website } = req.query as {
+            name?: string;
+            website?: string;
+        };
+
+        if (!name && !website) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide company name or website to search',
+            });
+        }
+
+        const lead = await LeadService.searchLeadByCompany({
+            companyName: name || undefined,
+            website: website || undefined,
+        });
+
+        return res.status(200).json({
+            success: true,
+            found: !!lead,
+            lead: lead || null,
+        });
+    } catch (error) {
+        console.error('Error searching lead by company:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to search lead',
+        });
+    }
+}
+
+async function addContactPerson(req: Request, res: Response) {
+    try {
+        const { id } = req.params;
+        const userId = req.auth?.id;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        if (!id) {
+            return res.status(400).json({
+                success: false,
+                message: 'Lead ID is required',
+            });
+        }
+
+        const contactPerson = req.body;
+
+        if (!contactPerson.emails || contactPerson.emails.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'At least one email is required for contact person',
+            });
+        }
+
+        if (!contactPerson.phones || contactPerson.phones.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'At least one phone is required for contact person',
+            });
+        }
+
+        const lead = await LeadService.addContactPersonToLead(
+            id,
+            userId,
+            contactPerson,
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Contact person added successfully',
+            lead,
+        });
+    } catch (error) {
+        console.error('Error adding contact person:', error);
+        return res.status(500).json({
+            success: false,
+            message: (error as Error).message || 'Failed to add contact person',
+        });
+    }
+}
+
 const LeadController = {
     newLead,
     getLeads,
@@ -437,5 +525,7 @@ const LeadController = {
     getLeadById,
     updateLead,
     importLeads,
+    searchLeadByCompany,
+    addContactPerson,
 };
 export default LeadController;

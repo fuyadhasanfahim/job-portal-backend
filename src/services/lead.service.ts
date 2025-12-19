@@ -341,7 +341,7 @@ async function newLeadsInDB(
             userId: ownerId,
             action: 'create_lead',
             entityType: 'lead',
-            entityId: newLead._id as string,
+            entityId: newLead._id.toString(),
             description: `Lead "${lead.company.name}" created with status "${lead.status}".`,
             data: { country: lead.country, status: lead.status },
         });
@@ -385,9 +385,9 @@ async function newLeadsInDB(
                     userId: system._id.toString(),
                     action: 'system_task_update',
                     entityType: 'task',
-                    entityId: existingTask._id as string,
+                    entityId: existingTask._id.toString(),
                     description: `Added new lead "${lead.company.name}" to today's system task.`,
-                    data: { ownerId, leadId: newLead._id as string },
+                    data: { ownerId, leadId: newLead._id.toString() },
                 });
             } else {
                 const task = await TaskModel.create({
@@ -406,7 +406,7 @@ async function newLeadsInDB(
                     userId: system._id.toString(),
                     action: 'system_task_create',
                     entityType: 'task',
-                    entityId: task._id as string,
+                    entityId: task._id.toString(),
                     description: `Created a new daily system task for user ${ownerId}.`,
                 });
             }
@@ -568,15 +568,23 @@ async function importLeadsFromData(
                 ],
             };
 
-            const existingLead = await LeadModel.findOne({
-                'company.name': company.name,
-                country: leadData.country,
-                owner: userId,
-            });
+            // Check for duplicate by company name AND website (globally)
+            const duplicateQuery: FilterQuery<ILead> = {
+                'company.name': { $regex: new RegExp(`^${company.name.trim()}$`, 'i') },
+            };
+            
+            // If website is provided, check for matching website too
+            if (company.website && company.website.trim()) {
+                duplicateQuery['company.website'] = { 
+                    $regex: new RegExp(`^${company.website.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')}$`, 'i')
+                };
+            }
+
+            const existingLead = await LeadModel.findOne(duplicateQuery);
 
             if (existingLead) {
                 result.errors.push(
-                    `Row ${rowNumber}: Lead already exists for company "${company.name}" in ${leadData.country}`,
+                    `Row ${rowNumber}: Lead already exists for company "${company.name}"${company.website ? ` with website "${company.website}"` : ''}`
                 );
                 result.failed++;
                 continue;
@@ -605,6 +613,92 @@ async function importLeadsFromData(
     return result;
 }
 
+async function searchLeadByCompany({
+    companyName,
+    website,
+}: {
+    companyName?: string | undefined;
+    website?: string | undefined;
+}) {
+    if (!companyName && !website) return null;
+
+    const orConditions: FilterQuery<ILead>[] = [];
+
+    if (companyName && companyName.trim()) {
+        orConditions.push({
+            'company.name': {
+                $regex: new RegExp(`^${companyName.trim()}$`, 'i'),
+            },
+        });
+    }
+
+    if (website && website.trim()) {
+        // Normalize website URL for comparison
+        const normalizedWebsite = website
+            .trim()
+            .replace(/^https?:\/\//, '')
+            .replace(/\/$/, '');
+        orConditions.push({
+            'company.website': {
+                $regex: new RegExp(normalizedWebsite, 'i'),
+            },
+        });
+    }
+
+    if (orConditions.length === 0) return null;
+
+    const lead = await LeadModel.findOne({ $or: orConditions })
+        .populate({
+            path: 'owner',
+            select: 'firstName lastName email role',
+        })
+        .lean();
+
+    return lead;
+}
+
+async function addContactPersonToLead(
+    leadId: string,
+    userId: string,
+    contactPerson: IContactPerson,
+) {
+    const lead = await LeadModel.findById(leadId);
+    if (!lead) throw new Error('Lead not found');
+
+    // Add new contact person
+    lead.contactPersons.push({
+        firstName: contactPerson.firstName?.trim() || '',
+        lastName: contactPerson.lastName?.trim() || '',
+        designation: contactPerson.designation?.trim() || '',
+        emails: contactPerson.emails.map((e) => e.trim().toLowerCase()),
+        phones: contactPerson.phones.map((p) => p.trim()),
+    });
+
+    // Add activity record
+    const activity: IActivity = {
+        status: lead.status,
+        byUser: new Types.ObjectId(userId),
+        at: new Date(),
+        notes: `Added new contact person: ${contactPerson.firstName || ''} ${contactPerson.lastName || ''}`.trim(),
+    };
+
+    if (!Array.isArray(lead.activities)) lead.activities = [];
+    lead.activities.push(activity);
+
+    await lead.save();
+
+    await createLog({
+        userId,
+        action: 'add_contact_person',
+        entityType: 'lead',
+        entityId: leadId,
+        description: `Added contact person "${contactPerson.firstName || ''} ${contactPerson.lastName || ''}" to lead "${lead.company?.name}"`,
+        data: { contactPerson },
+    });
+
+    return lead;
+}
+
 const LeadService = {
     newLeadsInDB,
     getLeadsFromDB,
@@ -612,6 +706,8 @@ const LeadService = {
     getLeadByIdFromDB,
     updateLeadInDB,
     importLeadsFromData,
+    searchLeadByCompany,
+    addContactPersonToLead,
 };
 
 export default LeadService;

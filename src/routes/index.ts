@@ -5,6 +5,7 @@ import { leadRoute } from './lead.route.js';
 import { countryRoute } from './country.route.js';
 import { taskRoute } from './task.route.js';
 import { logRoute } from './log.route.js';
+import { trashRoute } from './trash.route.js';
 
 const router: Router = Router();
 
@@ -33,6 +34,10 @@ const moduleRoutes = [
         path: '/logs',
         route: logRoute,
     },
+    {
+        path: '/trash',
+        route: trashRoute,
+    },
 ];
 
 moduleRoutes.forEach(({ path, route }) => {
@@ -40,3 +45,4 @@ moduleRoutes.forEach(({ path, route }) => {
 });
 
 export default router;
+
