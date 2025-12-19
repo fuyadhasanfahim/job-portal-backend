@@ -627,7 +627,7 @@ async function searchLeadByCompany({
     if (companyName && companyName.trim()) {
         orConditions.push({
             'company.name': {
-                $regex: new RegExp(`^${companyName.trim()}$`, 'i'),
+                $regex: new RegExp(companyName.trim(), 'i'),
             },
         });
     }

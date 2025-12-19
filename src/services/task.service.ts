@@ -59,7 +59,7 @@ async function createTaskInDB({
             userId: userId,
             action: 'create_task',
             entityType: 'task',
-            entityId: task._id as string,
+            entityId: task._id as unknown as string,
             description: `Task "${title}" created by ${role} and assigned to user ${assignedTo || userId}`,
             data: {
                 type,
