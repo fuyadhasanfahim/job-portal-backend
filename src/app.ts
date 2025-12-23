@@ -19,8 +19,12 @@ app.use(
 
 app.use(
     cors({
-        origin: env.cors_origin,
+        origin: env.cors_origin
+            ? env.cors_origin.split(',').map((o) => o.trim())
+            : '*',
         credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
     }),
 );
 

@@ -20,6 +20,11 @@ import {
 import TaskModel from '../models/task.model.js';
 import { createLog } from '../utils/logger.js';
 
+// Helper function to escape regex special characters
+function escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 async function getLeadsFromDB({
     page = 1,
     limit = 10,
@@ -568,23 +573,44 @@ async function importLeadsFromData(
                 ],
             };
 
-            // Check for duplicate by company name AND website (globally)
-            const duplicateQuery: FilterQuery<ILead> = {
-                'company.name': { $regex: new RegExp(`^${company.name.trim()}$`, 'i') },
-            };
-            
-            // If website is provided, check for matching website too
-            if (company.website && company.website.trim()) {
-                duplicateQuery['company.website'] = { 
-                    $regex: new RegExp(`^${company.website.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')}$`, 'i')
-                };
+            // Check for duplicate by company name OR website (globally)
+            // This prevents importing leads that already exist
+            const normalizedWebsite = company.website
+                ? company.website
+                      .trim()
+                      .toLowerCase()
+                      .replace(/^https?:\/\//, '')
+                      .replace(/^www\./, '')
+                      .replace(/\/$/, '')
+                : '';
+
+            const orConditions: FilterQuery<ILead>[] = [
+                {
+                    'company.name': {
+                        $regex: new RegExp(
+                            `^${escapeRegex(company.name.trim())}$`,
+                            'i',
+                        ),
+                    },
+                },
+            ];
+
+            // Only add website check if website is provided and not empty
+            if (normalizedWebsite) {
+                orConditions.push({
+                    'company.website': {
+                        $regex: new RegExp(escapeRegex(normalizedWebsite), 'i'),
+                    },
+                });
             }
+
+            const duplicateQuery: FilterQuery<ILead> = { $or: orConditions };
 
             const existingLead = await LeadModel.findOne(duplicateQuery);
 
             if (existingLead) {
                 result.errors.push(
-                    `Row ${rowNumber}: Lead already exists for company "${company.name}"${company.website ? ` with website "${company.website}"` : ''}`
+                    `Row ${rowNumber}: Lead already exists for company "${company.name}"${company.website ? ` with website "${company.website}"` : ''}`,
                 );
                 result.failed++;
                 continue;
