@@ -5,7 +5,15 @@ import {
     updateLeadValidation,
 } from '../validators/lead.validator.js';
 import z from 'zod';
-import { parseCSV, parseExcel, validateImportSchema, validateRowData, type ParsedRow, type SchemaValidationResult, type RowValidationError } from '../helpers/fileParser.js';
+import {
+    parseCSV,
+    parseExcel,
+    validateImportSchema,
+    validateRowData,
+    type ParsedRow,
+    type SchemaValidationResult,
+    type RowValidationError,
+} from '../helpers/fileParser.js';
 
 async function getLeads(req: Request, res: Response) {
     try {
@@ -19,6 +27,7 @@ async function getLeads(req: Request, res: Response) {
             country = '',
             date = '',
             selectedUserId,
+            group = '',
         } = req.query as {
             page: string;
             limit: string;
@@ -30,6 +39,7 @@ async function getLeads(req: Request, res: Response) {
             outcome: string;
             date: string;
             selectedUserId: string;
+            group: string;
         };
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
@@ -70,6 +80,7 @@ async function getLeads(req: Request, res: Response) {
             ...filters,
             date,
             selectedUserId,
+            ...(group.trim() ? { group: group.trim() } : {}),
         });
 
         return res.status(200).json({
@@ -348,7 +359,8 @@ async function importLeads(req: Request, res: Response) {
         }
 
         // Validate schema/columns first
-        const schemaValidation: SchemaValidationResult = validateImportSchema(parsedData);
+        const schemaValidation: SchemaValidationResult =
+            validateImportSchema(parsedData);
 
         if (!schemaValidation.valid) {
             return res.status(400).json({
@@ -383,7 +395,8 @@ async function importLeads(req: Request, res: Response) {
         if (validRows.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'No valid rows found in the file. All rows have validation errors.',
+                message:
+                    'No valid rows found in the file. All rows have validation errors.',
                 rowErrors: rowErrors.slice(0, 50), // Limit to first 50 errors
                 totalRowErrors: rowErrors.length,
                 warnings: schemaValidation.warnings,
@@ -419,7 +432,6 @@ async function importLeads(req: Request, res: Response) {
             },
             warnings: schemaValidation.warnings,
         });
-
     } catch (error) {
         console.error('Error importing leads:', error);
         res.status(500).json({
@@ -428,7 +440,6 @@ async function importLeads(req: Request, res: Response) {
         });
     }
 }
-
 
 async function searchLeadByCompany(req: Request, res: Response) {
     try {

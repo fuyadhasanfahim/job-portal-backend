@@ -51,6 +51,10 @@ export const newLeadValidation = z.object({
     address: z.string().optional(),
     country: z.string().min(1, 'Country is required'),
     notes: z.string().optional(),
+    group: z
+        .string()
+        .regex(/^[0-9a-fA-F]{24}$/, 'Invalid group ID')
+        .min(1, 'Group is required'),
     status: z.enum([
         'new',
         'busy',
@@ -101,6 +105,11 @@ export const updateLeadValidation = z.object({
     address: z.string().optional(),
     country: z.string().min(1, 'Country is required').optional(),
     notes: z.string().optional(),
+    group: z
+        .string()
+        .regex(/^[0-9a-fA-F]{24}$/, 'Invalid group ID')
+        .optional()
+        .nullable(),
     contactPersons: z.array(ContactPersonZ).optional(),
     status: z
         .enum([

@@ -87,6 +87,7 @@ const LeadSchema = new Schema<ILead>(
             ],
             default: 'new',
         },
+        group: { type: Schema.Types.ObjectId, ref: 'Group', default: null },
         owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         activities: [ActivitySchema],
     },

@@ -7,7 +7,7 @@ const logSchema = new Schema<ILog>(
         action: { type: String, required: true },
         entityType: {
             type: String,
-            enum: ['lead', 'task', 'user', 'system', 'trash', 'other'],
+            enum: ['lead', 'task', 'user', 'system', 'trash', 'group', 'other'],
             required: true,
         },
         entityId: { type: Schema.Types.ObjectId },

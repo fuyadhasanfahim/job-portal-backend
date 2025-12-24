@@ -6,6 +6,7 @@ import { countryRoute } from './country.route.js';
 import { taskRoute } from './task.route.js';
 import { logRoute } from './log.route.js';
 import { trashRoute } from './trash.route.js';
+import { groupRoute } from './group.route.js';
 
 const router: Router = Router();
 
@@ -38,6 +39,10 @@ const moduleRoutes = [
         path: '/trash',
         route: trashRoute,
     },
+    {
+        path: '/groups',
+        route: groupRoute,
+    },
 ];
 
 moduleRoutes.forEach(({ path, route }) => {
@@ -45,4 +50,3 @@ moduleRoutes.forEach(({ path, route }) => {
 });
 
 export default router;
-

@@ -4,7 +4,15 @@ import LogModel from '../models/logs.model.js';
 interface LogOptions {
     userId?: string;
     action: string;
-    entityType: 'user' | 'lead' | 'task' | 'system' | 'trash' | 'other';
+    entityType:
+        | 'user'
+        | 'lead'
+        | 'task'
+        | 'system'
+        | 'trash'
+        | 'other'
+        | 'company'
+        | 'group';
     entityId?: string;
     description?: string;
     data?: object;

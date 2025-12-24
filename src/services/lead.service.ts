@@ -36,6 +36,7 @@ async function getLeadsFromDB({
     userId,
     date,
     selectedUserId,
+    group,
 }: {
     page?: number;
     limit?: number;
@@ -47,6 +48,7 @@ async function getLeadsFromDB({
     userId: string;
     date?: string | Date;
     selectedUserId?: string;
+    group?: string;
 }) {
     const query: FilterQuery<ILead> = {};
 
@@ -65,6 +67,10 @@ async function getLeadsFromDB({
 
     if (status && status !== 'all') {
         query.status = status;
+    }
+
+    if (group && group !== 'all') {
+        query.group = new Types.ObjectId(group);
     }
 
     if (date) {
@@ -135,6 +141,10 @@ async function getLeadsFromDB({
             .populate({
                 path: 'activities.byUser',
                 select: 'firstName lastName email',
+            })
+            .populate({
+                path: 'group',
+                select: 'name color',
             })
             .lean(),
         LeadModel.countDocuments(query),
@@ -246,6 +256,10 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
             path: 'activities.byUser',
             select: 'firstName lastName email',
         })
+        .populate({
+            path: 'group',
+            select: 'name color',
+        })
         .lean();
 
     if (!lead) return null;
@@ -291,6 +305,7 @@ async function newLeadsInDB(
             address: lead.address?.trim() || '',
             country: lead.country.trim(),
             notes: lead.notes?.trim() || '',
+            ...(lead.group ? { group: new Types.ObjectId(lead.group) } : {}),
             contactPersons: (lead.contactPersons ?? []).map((cp) => ({
                 firstName: cp.firstName?.trim() || '',
                 lastName: cp.lastName?.trim() || '',
