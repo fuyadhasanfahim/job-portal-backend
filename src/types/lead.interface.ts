@@ -34,7 +34,7 @@ export interface IImportBatch {
     batchId: string;
     importedAt: Date;
     importedBy: Types.ObjectId;
-    fileName?: string;
+    fileName?: string | undefined;
     totalCount?: number;
 }
 
@@ -60,7 +60,7 @@ export interface ILead extends Document {
 
     contactPersons: IContactPerson[];
     status: LeadStatus;
-    group?: Types.ObjectId;
+    group?: Types.ObjectId | undefined;
 
     source: LeadSource;
     importBatch?: IImportBatch;

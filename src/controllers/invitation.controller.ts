@@ -171,7 +171,10 @@ async function revokeInvitation(req: Request, res: Response) {
             });
         }
 
-        await InvitationService.revokeInvitation(id, userId);
+        await InvitationService.revokeInvitation(
+            id as string,
+            userId as string,
+        );
 
         return res.status(200).json({
             success: true,
@@ -223,7 +226,10 @@ async function resendInvitation(req: Request, res: Response) {
             });
         }
 
-        const invitation = await InvitationService.resendInvitation(id, userId);
+        const invitation = await InvitationService.resendInvitation(
+            id as string,
+            userId as string,
+        );
 
         return res.status(200).json({
             success: true,

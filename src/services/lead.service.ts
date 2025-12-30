@@ -844,12 +844,12 @@ async function getAllMatchingLeadIds({
     selectedUserId,
     group,
 }: {
-    search?: string;
-    status?: string;
-    country?: string;
+    search?: string | undefined;
+    status?: string | undefined;
+    country?: string | undefined;
     userId: string;
-    selectedUserId?: string;
-    group?: string;
+    selectedUserId?: string | undefined;
+    group?: string | undefined;
 }): Promise<string[]> {
     const query: FilterQuery<ILead> = {};
 
