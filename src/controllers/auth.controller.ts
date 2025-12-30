@@ -20,9 +20,10 @@ const refreshMs = ms(env.refresh_expires as StringValue);
 
 export async function signupController(req: Request, res: Response) {
     try {
-        const { firstName, lastName, email, phone, role, password } = req.body;
+        const { firstName, lastName, email, phone, password, invitationToken } =
+            req.body;
 
-        if (!firstName || !email || !phone || !password || !role) {
+        if (!firstName || !email || !phone || !password || !invitationToken) {
             return res
                 .status(400)
                 .json({ success: false, message: 'Missing required fields.' });
@@ -33,8 +34,8 @@ export async function signupController(req: Request, res: Response) {
             lastName,
             email,
             phone,
-            role,
             password,
+            invitationToken,
         });
 
         return res
@@ -42,10 +43,30 @@ export async function signupController(req: Request, res: Response) {
             .json({ success: true, message: 'Account created successfully.' });
     } catch (error) {
         console.log(error);
-        if ((error as Error).message === 'EMAIL_EXISTS') {
+        const message = (error as Error).message;
+
+        if (message === 'EMAIL_ALREADY_EXISTS') {
             return res
                 .status(409)
                 .json({ success: false, message: 'Email already registered.' });
+        }
+
+        if (message === 'EMAIL_MISMATCH') {
+            return res
+                .status(400)
+                .json({
+                    success: false,
+                    message: 'Email does not match the invitation.',
+                });
+        }
+
+        if (message.includes('INVITATION')) {
+            return res
+                .status(400)
+                .json({
+                    success: false,
+                    message: 'Invalid or expired invitation.',
+                });
         }
 
         return res

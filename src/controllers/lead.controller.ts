@@ -28,6 +28,8 @@ async function getLeads(req: Request, res: Response) {
             date = '',
             selectedUserId,
             group = '',
+            source = '',
+            importBatchId = '',
         } = req.query as {
             page: string;
             limit: string;
@@ -40,6 +42,8 @@ async function getLeads(req: Request, res: Response) {
             date: string;
             selectedUserId: string;
             group: string;
+            source: string;
+            importBatchId: string;
         };
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
@@ -60,6 +64,8 @@ async function getLeads(req: Request, res: Response) {
         if (search.trim()) filters.search = search.trim();
         if (status.trim()) filters.status = status.trim();
         if (country.trim()) filters.country = country.trim();
+        if (source.trim()) filters.source = source.trim();
+        if (importBatchId.trim()) filters.importBatchId = importBatchId.trim();
 
         const validSortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
         const validSortBy = [
@@ -299,6 +305,7 @@ async function importLeads(req: Request, res: Response) {
     try {
         const userId = req.auth?.id;
         const files = req.files as Express.Multer.File[];
+        const { groupId } = req.body as { groupId?: string };
 
         if (!userId) {
             return res.status(401).json({
@@ -407,6 +414,8 @@ async function importLeads(req: Request, res: Response) {
         const importResult = await LeadService.importLeadsFromData(
             validRows,
             userId,
+            file?.originalname,
+            groupId,
         );
 
         // Combine row validation errors with import errors
@@ -529,6 +538,168 @@ async function addContactPerson(req: Request, res: Response) {
     }
 }
 
+async function bulkAssign(req: Request, res: Response) {
+    try {
+        const userId = req.auth?.id;
+        const userRole = req.auth?.role;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        // Only admins can bulk assign
+        if (userRole !== 'admin' && userRole !== 'super-admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Only admins can bulk assign leads',
+            });
+        }
+
+        const { leadIds, targetUserId } = req.body as {
+            leadIds: string[];
+            targetUserId: string;
+        };
+
+        if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide lead IDs to assign',
+            });
+        }
+
+        if (!targetUserId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide target user ID',
+            });
+        }
+
+        const result = await LeadService.bulkAssignLeads(
+            leadIds,
+            targetUserId,
+            userId,
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: `Successfully assigned ${result.success} leads`,
+            results: result,
+        });
+    } catch (error) {
+        console.error('Error bulk assigning leads:', error);
+        return res.status(500).json({
+            success: false,
+            message: (error as Error).message || 'Failed to assign leads',
+        });
+    }
+}
+
+async function getAllMatchingLeadIds(req: Request, res: Response) {
+    try {
+        const userId = req.auth?.id;
+        const userRole = req.auth?.role;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        // Only admins can get all matching lead IDs
+        if (userRole !== 'admin' && userRole !== 'super-admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Only admins can perform bulk operations',
+            });
+        }
+
+        const { search, status, country, selectedUserId, group } =
+            req.query as {
+                search?: string;
+                status?: string;
+                country?: string;
+                selectedUserId?: string;
+                group?: string;
+            };
+
+        const leadIds = await LeadService.getAllMatchingLeadIds({
+            search,
+            status,
+            country,
+            userId,
+            selectedUserId,
+            group,
+        });
+
+        return res.status(200).json({
+            success: true,
+            count: leadIds.length,
+            leadIds,
+        });
+    } catch (error) {
+        console.error('Error getting matching lead IDs:', error);
+        return res.status(500).json({
+            success: false,
+            message: (error as Error).message || 'Failed to get lead IDs',
+        });
+    }
+}
+
+async function bulkChangeGroup(req: Request, res: Response) {
+    try {
+        const userId = req.auth?.id;
+        const userRole = req.auth?.role;
+        const { leadIds, targetGroupId } = req.body as {
+            leadIds: string[];
+            targetGroupId: string | null;
+        };
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        // Only admins can bulk change groups
+        if (userRole !== 'admin' && userRole !== 'super-admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Only admins can perform bulk group changes',
+            });
+        }
+
+        if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'leadIds array is required',
+            });
+        }
+
+        const results = await LeadService.bulkChangeGroup(
+            leadIds,
+            targetGroupId,
+            userId,
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: `Successfully changed group for ${results.success} leads`,
+            results,
+        });
+    } catch (error) {
+        console.error('Error in bulk change group:', error);
+        return res.status(500).json({
+            success: false,
+            message: (error as Error).message || 'Failed to change group',
+        });
+    }
+}
+
 const LeadController = {
     newLead,
     getLeads,
@@ -538,5 +709,8 @@ const LeadController = {
     importLeads,
     searchLeadByCompany,
     addContactPerson,
+    bulkAssign,
+    getAllMatchingLeadIds,
+    bulkChangeGroup,
 };
 export default LeadController;

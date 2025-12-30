@@ -12,19 +12,34 @@ import { hashToken, verifyTokenHash } from '../utils/hash.js';
 import RefreshTokenModel from '../models/RefreshToken.model.js';
 import { addMs } from '../utils/time.js';
 import { createLog } from '../utils/logger.js';
+import InvitationService from './invitation.service.js';
 
 export async function signupService({
     firstName,
     lastName,
     email,
     phone,
-    role,
     password,
-}: Partial<IUser>) {
-    if (!firstName || !email || !phone || !password || !role) {
+    invitationToken,
+}: Partial<IUser> & { invitationToken: string }) {
+    if (!firstName || !email || !phone || !password || !invitationToken) {
         throw new Error(
-            'Missing required fields: firstName, email, phone, role or password.',
+            'Missing required fields: firstName, email, phone, password or invitationToken.',
         );
+    }
+
+    // Validate invitation token
+    const validationResult =
+        await InvitationService.validateInvitation(invitationToken);
+    if (!validationResult.valid || !validationResult.invitation) {
+        throw new Error(validationResult.error || 'INVALID_INVITATION');
+    }
+
+    const invitation = validationResult.invitation;
+
+    // Check if the email matches the invitation
+    if (invitation.email.toLowerCase() !== email.trim().toLowerCase()) {
+        throw new Error('EMAIL_MISMATCH');
     }
 
     const isExistingUser = await UserModel.findOne({
@@ -39,21 +54,28 @@ export async function signupService({
 
     const hashedPassword = await hash(password.trim(), 12);
 
+    // Role comes from invitation, not user input
     const newUser = await UserModel.create({
         firstName: firstName.trim(),
         lastName: lastName?.trim(),
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
-        role: role.trim(),
+        role: invitation.role,
         password: hashedPassword,
     });
+
+    // Mark invitation as used
+    await InvitationService.markInvitationUsed(
+        invitationToken,
+        newUser._id.toString(),
+    );
 
     await createLog({
         userId: newUser._id.toString(),
         action: 'user_signup',
         entityType: 'user',
         entityId: newUser._id as string,
-        description: `${newUser.email} signed up with role "${newUser.role}".`,
+        description: `${newUser.email} signed up with role "${newUser.role}" via invitation.`,
     });
 
     return newUser;

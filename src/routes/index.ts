@@ -7,6 +7,7 @@ import { taskRoute } from './task.route.js';
 import { logRoute } from './log.route.js';
 import { trashRoute } from './trash.route.js';
 import { groupRoute } from './group.route.js';
+import { invitationRoute } from './invitation.route.js';
 
 const router: Router = Router();
 
@@ -42,6 +43,10 @@ const moduleRoutes = [
     {
         path: '/groups',
         route: groupRoute,
+    },
+    {
+        path: '/invitations',
+        route: invitationRoute,
     },
 ];
 

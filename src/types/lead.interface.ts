@@ -28,6 +28,16 @@ export type LeadStatus =
     | 'on-board'
     | 'invalid-number';
 
+export type LeadSource = 'manual' | 'imported' | 'website';
+
+export interface IImportBatch {
+    batchId: string;
+    importedAt: Date;
+    importedBy: Types.ObjectId;
+    fileName?: string;
+    totalCount?: number;
+}
+
 export interface IActivity {
     status: LeadStatus;
     notes?: string;
@@ -51,6 +61,9 @@ export interface ILead extends Document {
     contactPersons: IContactPerson[];
     status: LeadStatus;
     group?: Types.ObjectId;
+
+    source: LeadSource;
+    importBatch?: IImportBatch;
 
     owner: Types.ObjectId;
     activities?: IActivity[];

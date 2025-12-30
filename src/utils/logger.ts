@@ -12,7 +12,8 @@ interface LogOptions {
         | 'trash'
         | 'other'
         | 'company'
-        | 'group';
+        | 'group'
+        | 'invitation';
     entityId?: string;
     description?: string;
     data?: object;

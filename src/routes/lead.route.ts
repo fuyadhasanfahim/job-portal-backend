@@ -10,11 +10,19 @@ const router: Router = Router();
 router.get('/get-leads', requireAuth, LeadController.getLeads);
 router.get('/get-leads-by-date', requireAuth, LeadController.getLeadsByDate);
 router.get('/get-lead/:id', requireAuth, LeadController.getLeadById);
-router.get('/search-by-company', requireAuth, LeadController.searchLeadByCompany);
+router.get(
+    '/search-by-company',
+    requireAuth,
+    LeadController.searchLeadByCompany,
+);
 
 // Post
 router.post('/new-lead', requireAuth, LeadController.newLead);
-router.post('/:id/add-contact-person', requireAuth, LeadController.addContactPerson);
+router.post(
+    '/:id/add-contact-person',
+    requireAuth,
+    LeadController.addContactPerson,
+);
 router.put('/update-lead/:id', requireAuth, LeadController.updateLead);
 
 router.post(
@@ -24,8 +32,20 @@ router.post(
     LeadController.importLeads,
 );
 
+// Bulk assign leads
+router.post('/bulk-assign', requireAuth, LeadController.bulkAssign);
+
+// Bulk change group
+router.post('/bulk-change-group', requireAuth, LeadController.bulkChangeGroup);
+
+// Get all matching lead IDs (for bulk selection)
+router.get(
+    '/get-all-matching-ids',
+    requireAuth,
+    LeadController.getAllMatchingLeadIds,
+);
+
 // Delete (moves to trash)
 router.delete('/:id', requireAuth, TrashController.deleteLead);
 
 export const leadRoute = router;
-

@@ -3,6 +3,7 @@ import type {
     IActivity,
     ICompany,
     IContactPerson,
+    IImportBatch,
     ILead,
 } from '../types/lead.interface.js';
 
@@ -61,6 +62,21 @@ const ActivitySchema = new Schema<IActivity>(
     { _id: false },
 );
 
+const ImportBatchSchema = new Schema<IImportBatch>(
+    {
+        batchId: { type: String, required: true },
+        importedAt: { type: Date, required: true },
+        importedBy: {
+            type: Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+        },
+        fileName: { type: String, trim: true },
+        totalCount: { type: Number },
+    },
+    { _id: false },
+);
+
 const LeadSchema = new Schema<ILead>(
     {
         company: { type: CompanySchema, required: true },
@@ -88,11 +104,21 @@ const LeadSchema = new Schema<ILead>(
             default: 'new',
         },
         group: { type: Schema.Types.ObjectId, ref: 'Group', default: null },
+        source: {
+            type: String,
+            enum: ['manual', 'imported', 'website'],
+            default: 'manual',
+        },
+        importBatch: { type: ImportBatchSchema, default: null },
         owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         activities: [ActivitySchema],
     },
     { timestamps: true },
 );
+
+// Index for faster filtering by source and importBatch
+LeadSchema.index({ source: 1 });
+LeadSchema.index({ 'importBatch.batchId': 1 });
 
 const LeadModel = model<ILead>('Lead', LeadSchema);
 export default LeadModel;

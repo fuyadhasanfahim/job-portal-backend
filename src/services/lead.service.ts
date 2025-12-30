@@ -37,6 +37,8 @@ async function getLeadsFromDB({
     date,
     selectedUserId,
     group,
+    source,
+    importBatchId,
 }: {
     page?: number;
     limit?: number;
@@ -49,6 +51,8 @@ async function getLeadsFromDB({
     date?: string | Date;
     selectedUserId?: string;
     group?: string;
+    source?: string;
+    importBatchId?: string;
 }) {
     const query: FilterQuery<ILead> = {};
 
@@ -71,6 +75,16 @@ async function getLeadsFromDB({
 
     if (group && group !== 'all') {
         query.group = new Types.ObjectId(group);
+    }
+
+    // Filter by source (manual, imported, website)
+    if (source && source !== 'all') {
+        query.source = source;
+    }
+
+    // Filter by import batch ID
+    if (importBatchId) {
+        query['importBatch.batchId'] = importBatchId;
     }
 
     if (date) {
@@ -535,6 +549,8 @@ async function updateLeadInDB(
 async function importLeadsFromData(
     rows: ParsedRow[],
     userId: string,
+    fileName?: string,
+    groupId?: string,
 ): Promise<ImportResult> {
     const result: ImportResult = {
         total: rows.length,
@@ -542,6 +558,10 @@ async function importLeadsFromData(
         failed: 0,
         errors: [],
     };
+
+    // Generate a unique batch ID for this import
+    const batchId = `import_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const importedAt = new Date();
 
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
@@ -577,13 +597,22 @@ async function importLeadsFromData(
                 notes: row.notes ? String(row.notes) : '',
                 contactPersons,
                 status: (row.status as ILead['status']) || 'new',
+                source: 'imported',
+                importBatch: {
+                    batchId,
+                    importedAt,
+                    importedBy: new Types.ObjectId(userId),
+                    fileName: fileName || undefined,
+                    totalCount: rows.length,
+                },
+                group: groupId ? new Types.ObjectId(groupId) : undefined,
                 owner: new Types.ObjectId(userId),
                 activities: [
                     {
                         status: 'new',
                         byUser: new Types.ObjectId(userId),
                         at: new Date(),
-                        notes: 'Lead imported via bulk upload',
+                        notes: `Lead imported via bulk upload${fileName ? ` from "${fileName}"` : ''}${groupId ? ' with group assignment' : ''}`,
                     },
                 ],
             };
@@ -740,6 +769,202 @@ async function addContactPersonToLead(
     return lead;
 }
 
+async function bulkAssignLeads(
+    leadIds: string[],
+    targetUserId: string,
+    assignedBy: string,
+): Promise<{ success: number; failed: number; errors: string[] }> {
+    const result = { success: 0, failed: 0, errors: [] as string[] };
+
+    const targetUser = await UserModel.findById(targetUserId).lean();
+    if (!targetUser) {
+        throw new Error('Target user not found');
+    }
+
+    const assigningUser = await UserModel.findById(assignedBy).lean();
+    if (!assigningUser) {
+        throw new Error('Assigning user not found');
+    }
+
+    for (const leadId of leadIds) {
+        try {
+            const lead = await LeadModel.findById(leadId);
+            if (!lead) {
+                result.errors.push(`Lead ${leadId} not found`);
+                result.failed++;
+                continue;
+            }
+
+            const previousOwner = lead.owner;
+            lead.owner = new Types.ObjectId(targetUserId);
+
+            // Add activity record
+            const activity: IActivity = {
+                status: lead.status,
+                byUser: new Types.ObjectId(assignedBy),
+                at: new Date(),
+                notes: `Lead reassigned from previous owner to ${targetUser.firstName} ${targetUser.lastName || ''}`.trim(),
+            };
+
+            if (!Array.isArray(lead.activities)) lead.activities = [];
+            lead.activities.push(activity);
+
+            await lead.save();
+
+            await createLog({
+                userId: assignedBy,
+                action: 'bulk_assign_lead',
+                entityType: 'lead',
+                entityId: leadId,
+                description:
+                    `Lead "${lead.company?.name}" assigned to ${targetUser.firstName} ${targetUser.lastName || ''}`.trim(),
+                data: {
+                    previousOwner: previousOwner.toString(),
+                    newOwner: targetUserId,
+                },
+            });
+
+            result.success++;
+        } catch (error) {
+            result.errors.push(
+                `Lead ${leadId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            );
+            result.failed++;
+        }
+    }
+
+    return result;
+}
+
+async function getAllMatchingLeadIds({
+    search,
+    status,
+    country,
+    userId,
+    selectedUserId,
+    group,
+}: {
+    search?: string;
+    status?: string;
+    country?: string;
+    userId: string;
+    selectedUserId?: string;
+    group?: string;
+}): Promise<string[]> {
+    const query: FilterQuery<ILead> = {};
+
+    const user = await UserModel.findById(userId).lean();
+    if (!user) throw new Error('User not found');
+
+    if (
+        (user.role === 'admin' || user.role === 'super-admin') &&
+        selectedUserId &&
+        selectedUserId !== 'all-user'
+    ) {
+        query.owner = new Types.ObjectId(selectedUserId);
+    } else if (user.role !== 'admin' && user.role !== 'super-admin') {
+        query.owner = new Types.ObjectId(userId);
+    }
+
+    if (status && status !== 'all') {
+        query.status = status;
+    }
+
+    if (group && group !== 'all') {
+        query.group = new Types.ObjectId(group);
+    }
+
+    if (country && country !== 'all') {
+        query.country = { $regex: country, $options: 'i' };
+    }
+
+    if (search && search.trim()) {
+        const regex = new RegExp(search.trim(), 'i');
+        query.$or = [
+            { 'company.name': regex },
+            { 'company.website': regex },
+            { 'contactPersons.firstName': regex },
+            { 'contactPersons.lastName': regex },
+        ];
+    }
+
+    const leads = await LeadModel.find(query).select('_id').lean();
+    return leads.map((l) => l._id.toString());
+}
+
+async function bulkChangeGroup(
+    leadIds: string[],
+    targetGroupId: string | null,
+    changedBy: string,
+): Promise<{ success: number; failed: number; errors: string[] }> {
+    const result = { success: 0, failed: 0, errors: [] as string[] };
+
+    const user = await UserModel.findById(changedBy).lean();
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    // Get group name for activity log
+    let groupName = 'No Group';
+    if (targetGroupId) {
+        const GroupModel = (await import('../models/group.model.js')).default;
+        const group = await GroupModel.findById(targetGroupId).lean();
+        if (group) {
+            groupName = group.name;
+        }
+    }
+
+    for (const leadId of leadIds) {
+        try {
+            const lead = await LeadModel.findById(leadId);
+            if (!lead) {
+                result.errors.push(`Lead ${leadId} not found`);
+                result.failed++;
+                continue;
+            }
+
+            const previousGroup = lead.group;
+            lead.group = targetGroupId
+                ? new Types.ObjectId(targetGroupId)
+                : undefined;
+
+            // Add activity record
+            const activity: IActivity = {
+                status: lead.status,
+                byUser: new Types.ObjectId(changedBy),
+                at: new Date(),
+                notes: `Group changed to "${groupName}"`,
+            };
+
+            if (!Array.isArray(lead.activities)) lead.activities = [];
+            lead.activities.push(activity);
+
+            await lead.save();
+
+            await createLog({
+                userId: changedBy,
+                action: 'bulk_change_group',
+                entityType: 'lead',
+                entityId: leadId,
+                description: `Lead "${lead.company?.name}" moved to group "${groupName}"`,
+                data: {
+                    previousGroup: previousGroup?.toString() || null,
+                    newGroup: targetGroupId,
+                },
+            });
+
+            result.success++;
+        } catch (error) {
+            result.errors.push(
+                `Lead ${leadId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            );
+            result.failed++;
+        }
+    }
+
+    return result;
+}
+
 const LeadService = {
     newLeadsInDB,
     getLeadsFromDB,
@@ -749,6 +974,9 @@ const LeadService = {
     importLeadsFromData,
     searchLeadByCompany,
     addContactPersonToLead,
+    bulkAssignLeads,
+    getAllMatchingLeadIds,
+    bulkChangeGroup,
 };
 
 export default LeadService;
