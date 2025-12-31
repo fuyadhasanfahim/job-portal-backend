@@ -41,4 +41,9 @@ export interface IUser {
     emailVerified: boolean;
     emailVerificationToken?: string;
     emailVerificationExpiry?: Date;
+
+    // Account lockout
+    failedLoginAttempts?: number;
+    lockUntil?: Date;
+    passwordHistory?: string[];
 }

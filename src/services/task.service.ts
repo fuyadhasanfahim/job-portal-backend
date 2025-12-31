@@ -4,6 +4,7 @@ import LeadModel from '../models/lead.model.js';
 import type { ITask } from '../types/task.interface.js';
 import type { IActivity, ILead } from '../types/lead.interface.js';
 import { createLog } from '../utils/logger.js';
+import NotificationService from './notification.service.js';
 
 async function createTaskInDB({
     title,
@@ -68,6 +69,21 @@ async function createTaskInDB({
                 createdBy: userId,
             },
         });
+
+        // Notify the assignee about the new task
+        if (assignedTo && assignedTo !== userId) {
+            await NotificationService.createNotification({
+                recipientId: assignedTo,
+                type: 'task_assigned',
+                title: 'New Task Assigned',
+                message: `You have been assigned a new task: "${title}"`,
+                data: {
+                    taskId: task._id as unknown as string,
+                    taskTitle: title,
+                    link: `/tasks/details/${task._id}`,
+                },
+            });
+        }
 
         return {
             success: true,
@@ -416,6 +432,24 @@ async function updateTaskWithLeadInDB({
             finishedAt: new Date(),
         };
         shouldUpdateTask = true;
+
+        // Notify the task creator that the task is completed
+        const creatorId = task.createdBy.toString();
+        const assigneeId = task.assignedTo?.toString();
+        if (creatorId !== userId) {
+            await NotificationService.createNotification({
+                recipientId: creatorId,
+                type: 'task_completed',
+                title: 'Task Completed',
+                message: `Task "${task.title || 'Untitled'}" has been completed!`,
+                data: {
+                    taskId,
+                    taskTitle: task.title || 'Untitled',
+                    userId: assigneeId || '',
+                    link: `/tasks/details/${taskId}`,
+                },
+            });
+        }
     } else if (isStarting) {
         taskUpdatePayload.$set = {
             ...taskUpdatePayload.$set,

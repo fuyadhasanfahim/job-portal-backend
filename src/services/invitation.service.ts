@@ -4,6 +4,7 @@ import UserModel from '../models/user.model.js';
 import type { IInvitation } from '../types/invitation.interface.js';
 import { createLog } from '../utils/logger.js';
 import { Types } from 'mongoose';
+import NotificationService from './notification.service.js';
 
 // Generate a secure random token
 function generateToken(): string {
@@ -113,14 +114,36 @@ async function markInvitationUsed(
     token: string,
     userId: string,
 ): Promise<void> {
-    await InvitationModel.updateOne(
-        { token },
-        {
-            status: 'used',
-            usedAt: new Date(),
-            usedBy: new Types.ObjectId(userId),
-        },
-    );
+    const invitation = await InvitationModel.findOne({ token });
+
+    if (invitation) {
+        invitation.status = 'used';
+        invitation.usedAt = new Date();
+        invitation.usedBy = new Types.ObjectId(userId);
+        await invitation.save();
+
+        // Get the new user's name for the notification
+        const newUser = await UserModel.findById(userId).lean();
+        const userName = newUser
+            ? `${newUser.firstName} ${newUser.lastName}`.trim() || newUser.email
+            : 'A new user';
+
+        // Notify the inviter that the user has joined
+        if (invitation.invitedBy) {
+            await NotificationService.createNotification({
+                recipientId: invitation.invitedBy.toString(),
+                type: 'invitation_accepted',
+                title: 'Invitation Accepted',
+                message: `${userName} has joined using your invitation!`,
+                data: {
+                    userId: userId,
+                    userName: userName,
+                    invitationId: invitation._id as unknown as string,
+                    link: '/invitations',
+                },
+            });
+        }
+    }
 }
 
 // Get all invitations (for admin panel)

@@ -52,21 +52,17 @@ export async function signupController(req: Request, res: Response) {
         }
 
         if (message === 'EMAIL_MISMATCH') {
-            return res
-                .status(400)
-                .json({
-                    success: false,
-                    message: 'Email does not match the invitation.',
-                });
+            return res.status(400).json({
+                success: false,
+                message: 'Email does not match the invitation.',
+            });
         }
 
         if (message.includes('INVITATION')) {
-            return res
-                .status(400)
-                .json({
-                    success: false,
-                    message: 'Invalid or expired invitation.',
-                });
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired invitation.',
+            });
         }
 
         return res
@@ -105,11 +101,35 @@ export async function signinController(req: Request, res: Response) {
             },
         });
     } catch (error) {
-        if ((error as Error).message === 'INVALID_CREDENTIALS') {
+        const message = (error as Error).message;
+
+        // Handle account locked
+        if (message.startsWith('ACCOUNT_LOCKED:')) {
+            const minutes = message.split(':')[1];
+            return res.status(423).json({
+                success: false,
+                message: `Account is locked. Please try again in ${minutes} minutes.`,
+                locked: true,
+                lockMinutes: parseInt(minutes || '0'),
+            });
+        }
+
+        // Handle invalid credentials with remaining attempts info
+        if (message.startsWith('INVALID_CREDENTIALS:')) {
+            const remaining = message.split(':')[1];
+            return res.status(401).json({
+                success: false,
+                message: `Invalid credentials. ${remaining} attempts remaining before lockout.`,
+                attemptsRemaining: parseInt(remaining || '0'),
+            });
+        }
+
+        if (message === 'INVALID_CREDENTIALS') {
             return res
                 .status(401)
                 .json({ success: false, message: 'Invalid credentials.' });
         }
+
         return res
             .status(500)
             .json({ success: false, message: 'Failed to log in.' });

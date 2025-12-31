@@ -7,11 +7,11 @@ const UserSchema = new Schema<IUser>(
         lastName: { type: String },
         email: { type: String, required: true, unique: true },
         phone: { type: String, required: true },
-        image: { type: String, required: true },
-        designation: { type: String, required: true },
-        address: { type: String, required: true },
-        country: { type: String, required: true },
-        bio: { type: String, required: true },
+        image: { type: String, default: '' },
+        designation: { type: String, default: '' },
+        address: { type: String, default: '' },
+        country: { type: String, default: '' },
+        bio: { type: String, default: '' },
         socialLinks: [
             {
                 icon: { type: String, required: true },
@@ -53,6 +53,13 @@ const UserSchema = new Schema<IUser>(
         emailVerified: { type: Boolean, default: false },
         emailVerificationToken: { type: String },
         emailVerificationExpiry: { type: Date },
+
+        // Account lockout fields
+        failedLoginAttempts: { type: Number, default: 0 },
+        lockUntil: { type: Date },
+
+        // Password history (stores last 5 password hashes)
+        passwordHistory: [{ type: String }],
     },
     { timestamps: true },
 );

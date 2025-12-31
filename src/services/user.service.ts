@@ -78,8 +78,28 @@ export async function updatePasswordInDB(
         throw new Error('Old password is incorrect');
     }
 
+    // Check if new password was used recently (last 5 passwords)
+    if (user.passwordHistory && user.passwordHistory.length > 0) {
+        for (const historyHash of user.passwordHistory) {
+            const isRefused = await compare(newPassword.trim(), historyHash);
+            if (isRefused) {
+                throw new Error('PASSWORD_RECENTLY_USED');
+            }
+        }
+    }
+
     const hashedPassword = await hash(newPassword.trim(), 12);
 
+    // Add current password to history before updating (limit to 5)
+    const currentHistory = user.passwordHistory || [];
+    currentHistory.unshift(user.password); // Add current to front
+
+    // Keep only last 5
+    if (currentHistory.length > 5) {
+        currentHistory.length = 5;
+    }
+
+    user.passwordHistory = currentHistory;
     user.password = hashedPassword;
     await user.save();
 

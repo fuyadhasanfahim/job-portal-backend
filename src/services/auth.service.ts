@@ -81,6 +81,9 @@ export async function signupService({
     return newUser;
 }
 
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCK_TIME_MS = 15 * 60 * 1000; // 15 minutes
+
 export async function signinService(
     email: string,
     password: string,
@@ -89,8 +92,44 @@ export async function signinService(
     const user = await UserModel.findOne({ email: email.trim().toLowerCase() });
     if (!user) throw new Error('INVALID_CREDENTIALS');
 
+    // Check if account is locked (admins can always login)
+    const isAdmin = user.role === 'admin' || user.role === 'super-admin';
+    if (!isAdmin && user.lockUntil && user.lockUntil > new Date()) {
+        const remainingMinutes = Math.ceil(
+            (user.lockUntil.getTime() - Date.now()) / 60000,
+        );
+        throw new Error(`ACCOUNT_LOCKED:${remainingMinutes}`);
+    }
+
     const isMatch = await compare(password, user.password);
-    if (!isMatch) throw new Error('INVALID_CREDENTIALS');
+
+    if (!isMatch) {
+        // Increment failed attempts
+        const failedAttempts = (user.failedLoginAttempts || 0) + 1;
+        const updateData: { failedLoginAttempts: number; lockUntil?: Date } = {
+            failedLoginAttempts: failedAttempts,
+        };
+
+        // Lock account if max attempts reached
+        if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+            updateData.lockUntil = new Date(Date.now() + LOCK_TIME_MS);
+            await UserModel.updateOne({ _id: user._id }, { $set: updateData });
+            throw new Error('ACCOUNT_LOCKED:15');
+        }
+
+        await UserModel.updateOne({ _id: user._id }, { $set: updateData });
+        throw new Error(
+            `INVALID_CREDENTIALS:${MAX_FAILED_ATTEMPTS - failedAttempts}`,
+        );
+    }
+
+    // Reset failed attempts on successful login
+    if (user.failedLoginAttempts && user.failedLoginAttempts > 0) {
+        await UserModel.updateOne(
+            { _id: user._id },
+            { $set: { failedLoginAttempts: 0, lockUntil: null } },
+        );
+    }
 
     const jti = newJti();
     const access = signAccessToken(String(user._id), String(user.role), jti);
@@ -118,6 +157,27 @@ export async function signinService(
     });
 
     return { access, refresh, user };
+}
+
+// Admin function to unlock a user account
+export async function unlockUserAccount(userId: string, adminId: string) {
+    const user = await UserModel.findById(userId);
+    if (!user) throw new Error('USER_NOT_FOUND');
+
+    await UserModel.updateOne(
+        { _id: userId },
+        { $set: { failedLoginAttempts: 0, lockUntil: null } },
+    );
+
+    await createLog({
+        userId: adminId,
+        action: 'account_unlocked',
+        entityType: 'user',
+        entityId: userId,
+        description: `Admin unlocked account for ${user.email}`,
+    });
+
+    return { success: true, message: 'Account unlocked successfully' };
 }
 
 export async function rotateRefreshToken(
@@ -206,7 +266,6 @@ export async function revokeRefreshToken(refreshToken: string) {
         userId: payload.sub,
         action: 'token_revoked',
         entityType: 'system',
-        entityId: payload.jti,
-        description: `Refresh token revoked for user ${payload.sub}`,
+        description: `Refresh token revoked for user ${payload.sub} (jti: ${payload.jti})`,
     });
 }
