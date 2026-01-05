@@ -59,15 +59,11 @@ async function getLeadsFromDB({
     const user = await UserModel.findById(userId).lean();
     if (!user) throw new Error('User not found');
 
-    if (
-        (user.role === 'admin' || user.role === 'super-admin') &&
-        selectedUserId &&
-        selectedUserId !== 'all-user'
-    ) {
+    // Allow filtering by selectedUserId if provided (for any user)
+    if (selectedUserId && selectedUserId !== 'all-user') {
         query.owner = new Types.ObjectId(selectedUserId);
-    } else if (user.role !== 'admin' && user.role !== 'super-admin') {
-        query.owner = new Types.ObjectId(userId);
     }
+    // No owner filter = all users see all leads
 
     if (status && status !== 'all') {
         query.status = status;
@@ -216,9 +212,7 @@ async function getLeadsByDateFromDB({
         createdAt: { $gte: startOfDay, $lte: endOfDay },
     };
 
-    if (user.role !== 'admin' && user.role !== 'super-admin') {
-        query.owner = new Types.ObjectId(userId);
-    }
+    // Removed: All users can now see all leads by date
 
     const skip = (page - 1) * limit;
 
@@ -284,16 +278,7 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
         );
     }
 
-    const isAdmin = userRole === 'admin' || userRole === 'super-admin';
-    const isOwner = lead.owner && lead.owner._id?.toString() === userId;
-
-    if (!isAdmin && !isOwner) {
-        const err = new Error('Access forbidden') as Error & {
-            status?: number;
-        };
-        err.status = 403;
-        throw err;
-    }
+    // Removed: All users can now view any lead details
 
     await createLog({
         userId,
@@ -856,15 +841,11 @@ async function getAllMatchingLeadIds({
     const user = await UserModel.findById(userId).lean();
     if (!user) throw new Error('User not found');
 
-    if (
-        (user.role === 'admin' || user.role === 'super-admin') &&
-        selectedUserId &&
-        selectedUserId !== 'all-user'
-    ) {
+    // Allow filtering by selectedUserId if provided (for any user)
+    if (selectedUserId && selectedUserId !== 'all-user') {
         query.owner = new Types.ObjectId(selectedUserId);
-    } else if (user.role !== 'admin' && user.role !== 'super-admin') {
-        query.owner = new Types.ObjectId(userId);
     }
+    // No owner filter = all users see all leads
 
     if (status && status !== 'all') {
         query.status = status;

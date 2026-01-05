@@ -102,16 +102,16 @@ async function createTaskInDB({
             };
         }
 
-        const ownedCount = await LeadModel.countDocuments({
+        // Removed: Any user can now create tasks with any leads
+        const existingCount = await LeadModel.countDocuments({
             _id: { $in: formattedLeads },
-            owner: userObjectId,
         });
 
-        if (ownedCount !== formattedLeads.length) {
+        if (existingCount !== formattedLeads.length) {
             return {
                 success: false,
-                statusCode: 403,
-                message: 'Some leads are not owned by this user',
+                statusCode: 404,
+                message: 'Some leads do not exist',
             };
         }
 
@@ -174,10 +174,8 @@ async function getTasksFromDB({
         if (selectedUserId && selectedUserId !== 'all') {
             query.assignedTo = new Types.ObjectId(selectedUserId);
         }
-    } else {
-        const userObjectId = new Types.ObjectId(userId);
-        query.$or = [{ createdBy: userObjectId }, { assignedTo: userObjectId }];
     }
+    // Removed: All users can now see all tasks
 
     if (status && status !== 'all') {
         query.status = status;
