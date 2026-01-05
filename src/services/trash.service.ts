@@ -12,21 +12,17 @@ import { createLog } from '../utils/logger.js';
 async function moveToTrash(
     leadId: string,
     userId: string,
-    reason?: string
+    reason?: string,
 ): Promise<{ success: boolean; message: string }> {
     const user = await UserModel.findById(userId).lean();
     if (!user) throw new Error('User not found');
 
-    const lead = await LeadModel.findById(leadId).lean() as (typeof LeadModel extends import('mongoose').Model<infer T> ? T & { createdAt: Date; updatedAt: Date } : never) | null;
+    const lead = (await LeadModel.findById(leadId).lean()) as
+        | (typeof LeadModel extends import('mongoose').Model<infer T>
+              ? T & { createdAt: Date; updatedAt: Date }
+              : never)
+        | null;
     if (!lead) throw new Error('Lead not found');
-
-    // Check if user is owner or admin
-    const isOwner = lead.owner.toString() === userId;
-    const isAdmin = ['admin', 'super-admin'].includes(user.role);
-
-    if (!isOwner && !isAdmin) {
-        throw new Error('Access forbidden: You cannot delete this lead');
-    }
 
     // Create trash entry with full lead data
     const trashedLead = await TrashedLeadModel.create({
@@ -51,7 +47,7 @@ async function moveToTrash(
     // Remove lead from any tasks
     await TaskModel.updateMany(
         { leads: lead._id },
-        { $pull: { leads: lead._id, completedLeads: lead._id } }
+        { $pull: { leads: lead._id, completedLeads: lead._id } },
     );
 
     // Delete the original lead
@@ -137,7 +133,7 @@ async function getTrashedLeads({
  */
 async function restoreFromTrash(
     trashId: string,
-    userId: string
+    userId: string,
 ): Promise<{ success: boolean; message: string; leadId?: string }> {
     const trashedLead = await TrashedLeadModel.findById(trashId);
     if (!trashedLead) throw new Error('Trashed lead not found');
@@ -149,7 +145,7 @@ async function restoreFromTrash(
 
     if (existingLead) {
         throw new Error(
-            `A lead with company name "${trashedLead.leadData.company.name}" already exists`
+            `A lead with company name "${trashedLead.leadData.company.name}" already exists`,
         );
     }
 
@@ -198,7 +194,7 @@ async function restoreFromTrash(
  */
 async function permanentDelete(
     trashId: string,
-    userId: string
+    userId: string,
 ): Promise<{ success: boolean; message: string }> {
     const trashedLead = await TrashedLeadModel.findById(trashId);
     if (!trashedLead) throw new Error('Trashed lead not found');
