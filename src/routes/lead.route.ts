@@ -45,6 +45,9 @@ router.get(
     LeadController.getAllMatchingLeadIds,
 );
 
+// Bulk delete (moves to trash)
+router.post('/bulk-delete', requireAuth, TrashController.bulkDelete);
+
 // Delete (moves to trash)
 router.delete('/:id', requireAuth, TrashController.deleteLead);
 

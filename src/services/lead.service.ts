@@ -59,6 +59,19 @@ async function getLeadsFromDB({
     const user = await UserModel.findById(userId).lean();
     if (!user) throw new Error('User not found');
 
+    // Exclude leads that are in active (non-completed) tasks
+    const activeTasks = await TaskModel.find({
+        status: { $nin: ['completed', 'cancelled'] }
+    }).select('leads').lean();
+    
+    const leadsInActiveTasks = new Set(
+        activeTasks.flatMap(t => t.leads?.map(id => id.toString()) || [])
+    );
+    
+    if (leadsInActiveTasks.size > 0) {
+        query._id = { $nin: Array.from(leadsInActiveTasks).map(id => new Types.ObjectId(id)) };
+    }
+
     // Allow filtering by selectedUserId if provided (for any user)
     if (selectedUserId && selectedUserId !== 'all-user') {
         query.owner = new Types.ObjectId(selectedUserId);

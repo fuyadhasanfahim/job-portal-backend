@@ -206,8 +206,49 @@ async function permanentDeleteLead(req: Request, res: Response) {
     }
 }
 
+/**
+ * Bulk delete leads (move multiple to trash)
+ */
+async function bulkDelete(req: Request, res: Response) {
+    try {
+        const userId = req.auth?.id;
+        const { leadIds, reason } = req.body;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Lead IDs array is required',
+            });
+        }
+
+        const result = await TrashService.bulkMoveToTrash(leadIds, userId, reason);
+        
+        return res.status(200).json({
+            success: true,
+            message: `${result.success} leads moved to trash, ${result.failed} failed`,
+            successCount: result.success,
+            failedCount: result.failed,
+            errors: result.errors,
+        });
+    } catch (error) {
+        console.error('Bulk delete error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to bulk delete leads',
+        });
+    }
+}
+
 const TrashController = {
     deleteLead,
+    bulkDelete,
     getTrashedLeads,
     restoreLead,
     permanentDeleteLead,

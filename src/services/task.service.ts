@@ -26,14 +26,18 @@ async function createTaskInDB({
     role: string;
 }) {
     const userObjectId = new Types.ObjectId(userId);
-    const formattedLeads = leads.map((id) => new Types.ObjectId(id));
+    
+    // Validate and filter leads - only keep valid ObjectIds
+    const formattedLeads = leads
+        .filter((id) => id && Types.ObjectId.isValid(id))
+        .map((id) => new Types.ObjectId(id));
 
     if (role === 'admin' || role === 'super-admin') {
-        if (!assignedTo) {
+        if (!assignedTo || !Types.ObjectId.isValid(assignedTo)) {
             return {
                 success: false,
                 statusCode: 400,
-                message: 'Please specify assignedTo user',
+                message: 'Please specify a valid assignedTo user',
             };
         }
 
@@ -562,10 +566,182 @@ async function updateTaskWithLeadInDB({
     };
 }
 
+// Force complete a task (admin only)
+async function forceCompleteTaskInDB({
+    taskId,
+    userId,
+    role,
+}: {
+    taskId: string;
+    userId: string;
+    role: string;
+}) {
+    if (!['admin', 'super-admin'].includes(role)) {
+        return {
+            success: false,
+            statusCode: 403,
+            message: 'Only admins can force complete tasks',
+        };
+    }
+
+    if (!Types.ObjectId.isValid(taskId)) {
+        return {
+            success: false,
+            statusCode: 400,
+            message: 'Invalid task ID',
+        };
+    }
+
+    const task = await TaskModel.findById(taskId);
+    if (!task) {
+        return {
+            success: false,
+            statusCode: 404,
+            message: 'Task not found',
+        };
+    }
+
+    task.status = 'completed';
+    task.progress = 100;
+    task.finishedAt = new Date();
+    if (task.metrics) {
+        task.metrics.done = task.metrics.total ?? 0;
+    }
+    await task.save();
+
+    await createLog({
+        userId,
+        action: 'force_complete_task',
+        entityType: 'task',
+        entityId: taskId,
+        description: `Admin force completed task "${task.title || 'Untitled'}"`,
+    });
+
+    return {
+        success: true,
+        statusCode: 200,
+        message: 'Task force completed successfully',
+        task,
+    };
+}
+
+// Remove a lead from a task and update metrics dynamically
+async function removeLeadFromTaskInDB({
+    taskId,
+    leadId,
+    userId,
+    role,
+}: {
+    taskId: string;
+    leadId: string;
+    userId: string;
+    role: string;
+}) {
+    if (!Types.ObjectId.isValid(taskId) || !Types.ObjectId.isValid(leadId)) {
+        return {
+            success: false,
+            statusCode: 400,
+            message: 'Invalid task or lead ID',
+        };
+    }
+
+    const task = await TaskModel.findById(taskId);
+    if (!task) {
+        return {
+            success: false,
+            statusCode: 404,
+            message: 'Task not found',
+        };
+    }
+
+    const canEdit =
+        ['admin', 'super-admin'].includes(role) ||
+        task.createdBy.toString() === userId ||
+        task.assignedTo?.toString() === userId;
+
+    if (!canEdit) {
+        return {
+            success: false,
+            statusCode: 403,
+            message: 'Access denied',
+        };
+    }
+
+    const leadObjectId = new Types.ObjectId(leadId);
+    
+    // Remove from leads array
+    task.leads = (task.leads || []).filter(
+        (id) => !id.equals(leadObjectId)
+    );
+
+    // Remove from completedLeads if present
+    const wasInCompleted = (task.completedLeads || []).some(
+        (id) => id.equals(leadObjectId)
+    );
+    task.completedLeads = (task.completedLeads || []).filter(
+        (id) => !id.equals(leadObjectId)
+    );
+
+    // Update metrics
+    const newTotal = task.leads.length;
+    const newDone = task.completedLeads.length;
+    
+    task.metrics = {
+        done: newDone,
+        total: newTotal,
+    };
+    task.quantity = newTotal;
+
+    // Recalculate progress
+    task.progress = newTotal > 0 ? Math.min(100, Math.round((newDone / newTotal) * 100)) : 0;
+
+    // Check if task should be completed now
+    if (newTotal > 0 && newDone >= newTotal && task.status !== 'completed') {
+        task.status = 'completed';
+        task.finishedAt = new Date();
+    } else if (newTotal === 0) {
+        // No leads left - mark as cancelled
+        task.status = 'cancelled';
+    }
+
+    await task.save();
+
+    await createLog({
+        userId,
+        action: 'remove_lead_from_task',
+        entityType: 'task',
+        entityId: taskId,
+        description: `Removed lead ${leadId} from task "${task.title || 'Untitled'}". New metrics: ${newDone}/${newTotal}`,
+        data: {
+            leadId,
+            wasInCompleted,
+            newDone,
+            newTotal,
+            newProgress: task.progress,
+        },
+    });
+
+    return {
+        success: true,
+        statusCode: 200,
+        message: 'Lead removed from task successfully',
+        task: {
+            _id: task._id,
+            leads: task.leads,
+            completedLeads: task.completedLeads,
+            metrics: task.metrics,
+            progress: task.progress,
+            status: task.status,
+        },
+    };
+}
+
 const TaskServices = {
     createTaskInDB,
     getTasksFromDB,
     getTaskByIdFromDB,
     updateTaskWithLeadInDB,
+    forceCompleteTaskInDB,
+    removeLeadFromTaskInDB,
 };
 export default TaskServices;

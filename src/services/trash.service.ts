@@ -218,8 +218,32 @@ async function permanentDelete(
     };
 }
 
+/**
+ * Bulk move leads to trash
+ */
+async function bulkMoveToTrash(
+    leadIds: string[],
+    userId: string,
+    reason?: string,
+): Promise<{ success: number; failed: number; errors: string[] }> {
+    const results = { success: 0, failed: 0, errors: [] as string[] };
+    
+    for (const leadId of leadIds) {
+        try {
+            await moveToTrash(leadId, userId, reason);
+            results.success++;
+        } catch (error) {
+            results.failed++;
+            results.errors.push(`Lead ${leadId}: ${(error as Error).message}`);
+        }
+    }
+    
+    return results;
+}
+
 const TrashService = {
     moveToTrash,
+    bulkMoveToTrash,
     getTrashedLeads,
     restoreFromTrash,
     permanentDelete,

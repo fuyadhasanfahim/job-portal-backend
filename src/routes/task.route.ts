@@ -15,4 +15,16 @@ router.put(
     TaskControllers.updateTaskWithLead,
 );
 
+router.put(
+    '/:taskId/force-complete',
+    requireAuth,
+    TaskControllers.forceCompleteTask,
+);
+
+router.delete(
+    '/:taskId/leads/:leadId',
+    requireAuth,
+    TaskControllers.removeLeadFromTask,
+);
+
 export const taskRoute = router;

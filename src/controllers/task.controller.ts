@@ -162,10 +162,73 @@ async function updateTaskWithLead(req: Request, res: Response) {
     }
 }
 
+async function forceCompleteTask(req: Request, res: Response) {
+    try {
+        const { taskId } = req.params;
+        const userId = req.auth?.id;
+        const role = req.auth?.role;
+
+        if (!userId || !role) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        const result = await TaskServices.forceCompleteTaskInDB({
+            taskId: taskId!,
+            userId,
+            role,
+        });
+
+        return res.status(result.statusCode).json(result);
+    } catch (error) {
+        console.error('Force complete task error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error',
+            error: (error as Error).message,
+        });
+    }
+}
+
+async function removeLeadFromTask(req: Request, res: Response) {
+    try {
+        const { taskId, leadId } = req.params;
+        const userId = req.auth?.id;
+        const role = req.auth?.role;
+
+        if (!userId || !role) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized',
+            });
+        }
+
+        const result = await TaskServices.removeLeadFromTaskInDB({
+            taskId: taskId!,
+            leadId: leadId!,
+            userId,
+            role,
+        });
+
+        return res.status(result.statusCode).json(result);
+    } catch (error) {
+        console.error('Remove lead from task error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error',
+            error: (error as Error).message,
+        });
+    }
+}
+
 const TaskControllers = {
     createTask,
     getTasks,
     getTaskById,
     updateTaskWithLead,
+    forceCompleteTask,
+    removeLeadFromTask,
 };
 export default TaskControllers;

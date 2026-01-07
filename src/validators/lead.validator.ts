@@ -25,15 +25,12 @@ export const ContactPersonZ = z.object({
 export const ActivityZ = z.object({
     status: z.enum([
         'new',
-        'busy',
         'answering-machine',
         'interested',
         'not-interested',
         'test-trial',
         'call-back',
         'on-board',
-        'no-answer',
-        'email/whatsApp-sent',
         'language-barrier',
         'invalid-number',
     ]),
@@ -57,15 +54,12 @@ export const newLeadValidation = z.object({
         .min(1, 'Group is required'),
     status: z.enum([
         'new',
-        'busy',
         'answering-machine',
         'interested',
         'not-interested',
         'test-trial',
         'call-back',
         'on-board',
-        'no-answer',
-        'email/whatsApp-sent',
         'language-barrier',
         'invalid-number',
     ]),
@@ -74,15 +68,12 @@ export const newLeadValidation = z.object({
             z.object({
                 status: z.enum([
                     'new',
-                    'busy',
                     'answering-machine',
                     'interested',
                     'not-interested',
                     'test-trial',
                     'call-back',
                     'on-board',
-                    'no-answer',
-                    'email/whatsApp-sent',
                     'language-barrier',
                     'invalid-number',
                 ]),
@@ -114,15 +105,12 @@ export const updateLeadValidation = z.object({
     status: z
         .enum([
             'new',
-            'busy',
             'answering-machine',
             'interested',
             'not-interested',
             'test-trial',
             'call-back',
             'on-board',
-            'no-answer',
-            'email/whatsApp-sent',
             'language-barrier',
             'invalid-number',
         ])

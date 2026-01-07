@@ -665,14 +665,6 @@ async function bulkChangeGroup(req: Request, res: Response) {
             });
         }
 
-        // Only admins can bulk change groups
-        if (userRole !== 'admin' && userRole !== 'super-admin') {
-            return res.status(403).json({
-                success: false,
-                message: 'Only admins can perform bulk group changes',
-            });
-        }
-
         if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
             return res.status(400).json({
                 success: false,
