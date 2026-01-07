@@ -471,15 +471,16 @@ async function updateLeadInDB(
 
     const lead = leadDoc as typeof leadDoc & ILead;
 
-    const isOwner = lead.owner.toString() === userId.toString();
-    const isAdmin = ['admin', 'super-admin'].includes(role);
-    if (!isOwner && !isAdmin) {
-        const err = new Error(
-            'Access forbidden: You cannot edit this lead',
-        ) as Error & { status?: number };
-        err.status = 403;
-        throw err;
-    }
+    // Permission check removed - allowing all users to update leads
+    // const isOwner = lead.owner.toString() === userId.toString();
+    // const isAdmin = ['admin', 'super-admin'].includes(role);
+    // if (!isOwner && !isAdmin) {
+    //     const err = new Error(
+    //         'Access forbidden: You cannot edit this lead',
+    //     ) as Error & { status?: number };
+    //     err.status = 403;
+    //     throw err;
+    // }
 
     const changedFields: string[] = [];
     const oldLead = lead.toObject() as ILead;
