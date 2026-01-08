@@ -615,8 +615,9 @@ async function importLeadsFromData(
             continue;
         }
 
-        const normalizedWebsite = row.website
-            ? row.website
+        const websiteValue = row.website ? String(row.website) : '';
+        const normalizedWebsite = websiteValue
+            ? websiteValue
                   .trim()
                   .toLowerCase()
                   .replace(/^https?:\/\/(www\.)?/, '')
@@ -624,13 +625,14 @@ async function importLeadsFromData(
             : '';
         
         // Key to identify unique companies: Name + Normalized Website
-        const key = `${row.companyName.trim().toLowerCase()}|${normalizedWebsite}`;
+        const companyNameValue = String(row.companyName);
+        const key = `${companyNameValue.trim().toLowerCase()}|${normalizedWebsite}`;
 
         if (!groupedRows.has(key)) {
             groupedRows.set(key, {
                 company: {
-                    name: row.companyName.trim(),
-                    website: row.website?.trim() || '',
+                    name: String(row.companyName).trim(),
+                    website: row.website ? String(row.website).trim() : '',
                 },
                 rows: [],
                 rowNumbers: [],
@@ -642,9 +644,16 @@ async function importLeadsFromData(
     }
 
     // Process each unique company group
-    for (const [key, groupData] of groupedRows) {
+    for (const [, groupData] of groupedRows) {
         const { company, rows: groupRows, rowNumbers } = groupData;
         const mainRow = groupRows[0]; // Use first row for common data (address, country, etc.)
+
+        // Skip if no rows in group (shouldn't happen, but TypeScript safety)
+        if (!mainRow) {
+            result.errors.push(`Invalid group data`);
+            result.failed += groupRows.length;
+            continue;
+        }
 
         try {
             // Collect all unique contact persons from all rows in this group
