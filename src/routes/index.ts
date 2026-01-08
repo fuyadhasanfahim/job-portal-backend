@@ -9,6 +9,7 @@ import { trashRoute } from './trash.route.js';
 import { groupRoute } from './group.route.js';
 import { invitationRoute } from './invitation.route.js';
 import { notificationRoute } from './notification.route.js';
+import { analyticsRoute } from './analytics.route.js';
 
 const router: Router = Router();
 
@@ -52,6 +53,10 @@ const moduleRoutes = [
     {
         path: '/notifications',
         route: notificationRoute,
+    },
+    {
+        path: '/analytics',
+        route: analyticsRoute,
     },
 ];
 
