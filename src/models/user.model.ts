@@ -31,6 +31,7 @@ const UserSchema = new Schema<IUser>(
             enum: [
                 'super-admin',
                 'admin',
+                'team-leader',
                 'telemarketer',
                 'digital-marketer',
                 'seo-executive',

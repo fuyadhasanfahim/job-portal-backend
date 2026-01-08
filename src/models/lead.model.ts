@@ -20,8 +20,8 @@ const ContactPersonSchema = new Schema<IContactPerson>(
         firstName: { type: String, trim: true },
         lastName: { type: String, trim: true },
         designation: { type: String, trim: true },
-        emails: [{ type: String, required: true, trim: true }],
-        phones: [{ type: String, required: true, trim: true }],
+        emails: [{ type: String, trim: true }],
+        phones: [{ type: String, trim: true }],
     },
     { _id: false },
 );

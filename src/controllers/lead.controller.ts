@@ -30,6 +30,7 @@ async function getLeads(req: Request, res: Response) {
             group = '',
             source = '',
             importBatchId = '',
+            contactFilter = 'all',
         } = req.query as {
             page: string;
             limit: string;
@@ -44,6 +45,7 @@ async function getLeads(req: Request, res: Response) {
             group: string;
             source: string;
             importBatchId: string;
+            contactFilter: 'all' | 'email-only' | 'phone-only';
         };
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
@@ -87,6 +89,7 @@ async function getLeads(req: Request, res: Response) {
             date,
             selectedUserId,
             ...(group.trim() ? { group: group.trim() } : {}),
+            contactFilter: contactFilter as 'all' | 'email-only' | 'phone-only',
         });
 
         return res.status(200).json({
@@ -305,7 +308,15 @@ async function importLeads(req: Request, res: Response) {
     try {
         const userId = req.auth?.id;
         const files = req.files as Express.Multer.File[];
-        const { groupId } = req.body as { groupId?: string };
+        const { groupId, requireEmail, requirePhone } = req.body as {
+            groupId?: string;
+            requireEmail?: string;
+            requirePhone?: string;
+        };
+
+        // Parse boolean flags from string values
+        const emailRequired = requireEmail === 'true';
+        const phoneRequired = requirePhone === 'true';
 
         if (!userId) {
             return res.status(401).json({
@@ -389,7 +400,7 @@ async function importLeads(req: Request, res: Response) {
             const row = parsedData[i];
             if (!row) continue;
 
-            const errors = validateRowData(row, i);
+            const errors = validateRowData(row, i, { requireEmail: emailRequired, requirePhone: phoneRequired });
             if (errors.length > 0) {
                 rowErrors.push(...errors);
                 invalidRowIndices.add(i); // Track this row as invalid

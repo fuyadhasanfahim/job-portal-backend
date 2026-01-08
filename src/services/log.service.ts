@@ -1,7 +1,9 @@
 
-import { Types } from 'mongoose';
+import { Types, type FilterQuery } from 'mongoose';
 import LeadModel from '../models/lead.model.js';
 import UserModel from '../models/user.model.js';
+import LogModel from '../models/logs.model.js';
+import type { ILog } from '../types/logs.interface.js';
 import { getDateRange } from '../utils/getDateRange.js';
 
 async function getLeadAnalyticsFromDB(monthFilter?: string) {
@@ -438,12 +440,84 @@ async function getAllUsersTableFromDB({ page = 1, limit = 10, search = '' }) {
     };
 }
 
+// NEW: Get activity logs with filters (for Admin Logs Viewer)
+async function getActivityLogsFromDB({
+    page = 1,
+    limit = 20,
+    search = '',
+    userId,
+    action,
+    entityType,
+    startDate,
+    endDate,
+    level,
+}: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    userId?: string | undefined;
+    action?: string | undefined;
+    entityType?: string | undefined;
+    startDate?: string | undefined;
+    endDate?: string | undefined;
+    level?: string | undefined;
+}) {
+    const skip = (page - 1) * limit;
+    const regex = search ? new RegExp(search.trim(), 'i') : undefined;
+
+    const query: FilterQuery<ILog> = {};
+
+    if (regex) {
+        query.$or = [
+            { description: regex },
+            { action: regex },
+            { 'data.fileName': regex }, // Search in data if relevant
+        ];
+    }
+
+    if (userId) query.user = new Types.ObjectId(userId);
+    if (action) query.action = action;
+    if (entityType) query.entityType = entityType;
+    if (level) query.level = level;
+
+    if (startDate || endDate) {
+        query.createdAt = {};
+        if (startDate) query.createdAt.$gte = new Date(startDate);
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            query.createdAt.$lte = end;
+        }
+    }
+
+    const [logs, total] = await Promise.all([
+        LogModel.find(query)
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate('user', 'firstName lastName email role image') // Populate user details
+            .lean(),
+        LogModel.countDocuments(query),
+    ]);
+
+    return {
+        pagination: {
+            totalItems: total,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
+            limit,
+        },
+        logs,
+    };
+}
+
 const LogServices = {
     getLeadAnalyticsFromDB,
     getTopUsersFromDB,
     getUserLeadStatsFromDB,
     getTopUsersPieChartFromDB,
     getAllUsersTableFromDB,
+    getActivityLogsFromDB,
 };
 
 export default LogServices;

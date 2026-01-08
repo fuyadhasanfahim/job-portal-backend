@@ -4,6 +4,7 @@ import LogModel from '../models/logs.model.js';
 interface LogOptions {
     userId?: string;
     action: string;
+    level?: 'info' | 'warning' | 'error' | 'debug'; // Added level
     entityType:
         | 'user'
         | 'lead'
@@ -13,7 +14,7 @@ interface LogOptions {
         | 'other'
         | 'company'
         | 'group'
-        | 'invitation';
+        | 'invitation'; // Added invitation
     entityId?: string;
     description?: string;
     data?: object;
@@ -24,6 +25,7 @@ interface LogOptions {
 export async function createLog({
     userId,
     action,
+    level = 'info', // Default to info
     entityType,
     entityId,
     description,

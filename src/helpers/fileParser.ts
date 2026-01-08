@@ -104,6 +104,25 @@ export async function parseContactPersons(
         } as IContactPerson);
     }
 
+    // Secondary contact from contact2 columns
+    if (row.contact2FirstName || row.contact2Email || row.contact2Phone) {
+        const [emails, phones] = await Promise.all([
+            parseEmails(row.contact2Email),
+            parsePhones(row.contact2Phone),
+        ]);
+
+        // Only add if we have at least some contact info
+        if (emails.length > 0 || phones.length > 0 || row.contact2FirstName) {
+            contactPersons.push({
+                firstName: row.contact2FirstName
+                    ? String(row.contact2FirstName)
+                    : undefined,
+                emails,
+                phones,
+            } as IContactPerson);
+        }
+    }
+
     if (row.additionalContacts) {
         const additionalContacts = String(row.additionalContacts)
             .split(';')
@@ -165,7 +184,7 @@ export interface SchemaValidationResult {
 
 // Required columns for lead import
 const REQUIRED_COLUMNS = ['companyName', 'country'];
-const CONTACT_COLUMNS = ['contactEmail', 'contactPhone']; // At least one required
+// Contact columns are now fully optional
 const OPTIONAL_COLUMNS = [
     'website',
     'address',
@@ -174,6 +193,8 @@ const OPTIONAL_COLUMNS = [
     'contactFirstName',
     'contactLastName',
     'contactDesignation',
+    'contactEmail',
+    'contactPhone',
     'additionalContacts',
 ];
 
@@ -188,7 +209,7 @@ export function validateImportSchema(rows: ParsedRow[]): SchemaValidationResult 
         detectedColumns: [],
         expectedColumns: {
             required: REQUIRED_COLUMNS,
-            contactRequired: CONTACT_COLUMNS,
+            contactRequired: [], // Contact info is now optional
             optional: OPTIONAL_COLUMNS,
         },
     };
@@ -234,23 +255,11 @@ export function validateImportSchema(rows: ParsedRow[]): SchemaValidationResult 
         }
     }
 
-    // Check if at least one contact column exists
-    const hasContactColumn = CONTACT_COLUMNS.some((col) =>
-        normalizedColumns.includes(col.toLowerCase())
-    );
-
-    if (!hasContactColumn) {
-        result.valid = false;
-        result.errors.push({
-            type: 'missing_contact',
-            message: `At least one contact column is required: "${CONTACT_COLUMNS.join('" or "')}"`,
-        });
-    }
+    // Contact columns are now optional - no validation required
 
     // Check for unknown columns (warnings only)
     const allKnownColumns = [
         ...REQUIRED_COLUMNS,
-        ...CONTACT_COLUMNS,
         ...OPTIONAL_COLUMNS,
     ].map((c) => c.toLowerCase());
 
@@ -275,12 +284,19 @@ export interface RowValidationError {
     message: string;
 }
 
+export interface RowValidationOptions {
+    requireEmail?: boolean;
+    requirePhone?: boolean;
+}
+
 export function validateRowData(
     row: ParsedRow,
-    rowIndex: number
+    rowIndex: number,
+    options: RowValidationOptions = {}
 ): RowValidationError[] {
     const errors: RowValidationError[] = [];
     const rowNumber = rowIndex + 2; // +2 because index is 0-based and we skip header row
+    const { requireEmail = false, requirePhone = false } = options;
 
     // Check required fields have values
     if (!row.companyName || String(row.companyName).trim() === '') {
@@ -299,15 +315,23 @@ export function validateRowData(
         });
     }
 
-    // Check at least one contact method
+    // Check contact info based on options
     const hasEmail = row.contactEmail && String(row.contactEmail).trim() !== '';
     const hasPhone = row.contactPhone && String(row.contactPhone).trim() !== '';
 
-    if (!hasEmail && !hasPhone) {
+    if (requireEmail && !hasEmail) {
         errors.push({
             row: rowNumber,
-            field: 'contact',
-            message: `Row ${rowNumber}: At least one contact email or phone is required`,
+            field: 'contactEmail',
+            message: `Row ${rowNumber}: Email is required`,
+        });
+    }
+
+    if (requirePhone && !hasPhone) {
+        errors.push({
+            row: rowNumber,
+            field: 'contactPhone',
+            message: `Row ${rowNumber}: Phone is required`,
         });
     }
 

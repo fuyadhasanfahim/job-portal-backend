@@ -5,9 +5,23 @@ const logSchema = new Schema<ILog>(
     {
         user: { type: Schema.Types.ObjectId, ref: 'User' },
         action: { type: String, required: true },
+        level: {
+            type: String,
+            enum: ['info', 'warning', 'error', 'debug'],
+            default: 'info',
+        },
         entityType: {
             type: String,
-            enum: ['lead', 'task', 'user', 'system', 'trash', 'group', 'other'],
+            enum: [
+                'lead',
+                'task',
+                'user',
+                'system',
+                'trash',
+                'group',
+                'invitation',
+                'other',
+            ],
             required: true,
         },
         entityId: { type: Schema.Types.ObjectId },

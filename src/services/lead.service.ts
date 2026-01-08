@@ -39,6 +39,7 @@ async function getLeadsFromDB({
     group,
     source,
     importBatchId,
+    contactFilter,
 }: {
     page?: number;
     limit?: number;
@@ -53,6 +54,7 @@ async function getLeadsFromDB({
     group?: string;
     source?: string;
     importBatchId?: string;
+    contactFilter?: 'all' | 'email-only' | 'phone-only' | 'email-with-phone';
 }) {
     const query: FilterQuery<ILead> = {};
 
@@ -94,6 +96,35 @@ async function getLeadsFromDB({
     // Filter by import batch ID
     if (importBatchId) {
         query['importBatch.batchId'] = importBatchId;
+    }
+
+    // Filter by contact info availability
+    if (contactFilter && contactFilter !== 'all') {
+        if (contactFilter === 'email-with-phone') {
+            // Has both email and phone
+            query.$and = [
+                { 'contactPersons.emails.0': { $exists: true } },
+                { 'contactPersons.phones.0': { $exists: true } }
+            ];
+        } else if (contactFilter === 'email-only') {
+            // Has at least one email, but no phones
+            query.$and = [
+                { 'contactPersons.emails.0': { $exists: true } },
+                { $or: [
+                    { 'contactPersons.phones': { $size: 0 } },
+                    { 'contactPersons.phones.0': { $exists: false } }
+                ]}
+            ];
+        } else if (contactFilter === 'phone-only') {
+            // Has at least one phone, but no emails
+            query.$and = [
+                { 'contactPersons.phones.0': { $exists: true } },
+                { $or: [
+                    { 'contactPersons.emails': { $size: 0 } },
+                    { 'contactPersons.emails.0': { $exists: false } }
+                ]}
+            ];
+        }
     }
 
     if (date) {
@@ -562,62 +593,76 @@ async function importLeadsFromData(
     const batchId = `import_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const importedAt = new Date();
 
+    // Group rows by company info to handle multi-contact imports from same file
+    const groupedRows = new Map<
+        string,
+        {
+            company: { name: string; website: string };
+            rows: ParsedRow[];
+            rowNumbers: number[];
+        }
+    >();
+
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const rowNumber = i + 2;
 
-        try {
-            if (!row?.companyName || !row.country) {
-                result.errors.push(
-                    `Row ${rowNumber}: Missing required fields (companyName and country)`,
-                );
-                result.failed++;
-                continue;
-            }
+        if (!row?.companyName || !row.country) {
+            result.errors.push(
+                `Row ${rowNumber}: Missing required fields (companyName and country)`,
+            );
+            result.failed++;
+            continue;
+        }
 
-            const company = {
-                name: String(row.companyName || ''),
-                website: String(row.website || ''),
-            };
+        const normalizedWebsite = row.website
+            ? row.website
+                  .trim()
+                  .toLowerCase()
+                  .replace(/^https?:\/\/(www\.)?/, '')
+                  .replace(/\/$/, '')
+            : '';
+        
+        // Key to identify unique companies: Name + Normalized Website
+        const key = `${row.companyName.trim().toLowerCase()}|${normalizedWebsite}`;
 
-            const contactPersons = await parseContactPersons(row);
-            if (contactPersons.length === 0) {
-                result.errors.push(
-                    `Row ${rowNumber}: No valid contact persons found.`,
-                );
-                result.failed++;
-                continue;
-            }
-
-            const leadData: Partial<ILead> = {
-                company,
-                address: row.address ? String(row.address) : '',
-                country: String(row.country),
-                notes: row.notes ? String(row.notes) : '',
-                contactPersons,
-                status: (row.status as ILead['status']) || 'new',
-                source: 'imported',
-                importBatch: {
-                    batchId,
-                    importedAt,
-                    importedBy: new Types.ObjectId(userId),
-                    fileName: fileName || undefined,
-                    totalCount: rows.length,
+        if (!groupedRows.has(key)) {
+            groupedRows.set(key, {
+                company: {
+                    name: row.companyName.trim(),
+                    website: row.website?.trim() || '',
                 },
-                group: groupId ? new Types.ObjectId(groupId) : undefined,
-                owner: new Types.ObjectId(userId),
-                activities: [
-                    {
-                        status: 'new',
-                        byUser: new Types.ObjectId(userId),
-                        at: new Date(),
-                        notes: `Lead imported via bulk upload${fileName ? ` from "${fileName}"` : ''}${groupId ? ' with group assignment' : ''}`,
-                    },
-                ],
-            };
+                rows: [],
+                rowNumbers: [],
+            });
+        }
+        
+        groupedRows.get(key)!.rows.push(row);
+        groupedRows.get(key)!.rowNumbers.push(rowNumber);
+    }
 
-            // Check for duplicate by company name OR website (globally)
-            // This prevents importing leads that already exist
+    // Process each unique company group
+    for (const [key, groupData] of groupedRows) {
+        const { company, rows: groupRows, rowNumbers } = groupData;
+        const mainRow = groupRows[0]; // Use first row for common data (address, country, etc.)
+
+        try {
+            // Collect all unique contact persons from all rows in this group
+            const allContactPersons: IContactPerson[] = [];
+            
+            for (const row of groupRows) {
+                const contacts = await parseContactPersons(row);
+                allContactPersons.push(...contacts);
+            }
+
+            // Remove duplicates within the file itself based on email
+            const uniqueFileContacts = allContactPersons.filter((contact, index, self) =>
+                index === self.findIndex((c) => (
+                    c.emails[0] && contact.emails[0] && c.emails[0] === contact.emails[0]
+                ))
+            );
+
+            // Check if lead exists in DB
             const normalizedWebsite = company.website
                 ? company.website
                       .trim()
@@ -631,14 +676,13 @@ async function importLeadsFromData(
                 {
                     'company.name': {
                         $regex: new RegExp(
-                            `^${escapeRegex(company.name.trim())}$`,
+                            `^${escapeRegex(company.name)}$`,
                             'i',
                         ),
                     },
                 },
             ];
 
-            // Only add website check if website is provided and not empty
             if (normalizedWebsite) {
                 orConditions.push({
                     'company.website': {
@@ -647,27 +691,95 @@ async function importLeadsFromData(
                 });
             }
 
-            const duplicateQuery: FilterQuery<ILead> = { $or: orConditions };
-
-            const existingLead = await LeadModel.findOne(duplicateQuery);
+            const existingLead = await LeadModel.findOne({ $or: orConditions });
 
             if (existingLead) {
-                result.errors.push(
-                    `Row ${rowNumber}: Lead already exists for company "${company.name}"${company.website ? ` with website "${company.website}"` : ''}`,
-                );
-                result.failed++;
-                continue;
+                // UPDATE EXISTING LEAD
+                let newContactsAdded = 0;
+                
+                // Merge new contacts if they don't exist
+                for (const newContact of uniqueFileContacts) {
+                    const newEmail = newContact.emails[0];
+                    const existingContact = existingLead.contactPersons.find(
+                        (c) => c.emails[0] === newEmail
+                    );
+
+                    if (!existingContact) {
+                        existingLead.contactPersons.push(newContact);
+                        newContactsAdded++;
+                    }
+                }
+
+                if (newContactsAdded > 0) {
+                    await existingLead.save();
+                    await createLog({
+                        userId,
+                        action: 'update_lead',
+                        entityType: 'lead',
+                        entityId: existingLead._id.toString(),
+                        description: `Imported lead merged: Added ${newContactsAdded} new contact person(s) to "${company.name}".`,
+                        data: { addedContacts: newContactsAdded },
+                    });
+                    result.successful += groupRows.length; // Count all rows as successful
+                } else {
+                    // Duplicate lead with no new info
+                     result.errors.push(
+                        `Rows ${rowNumbers.join(', ')}: Lead already exists for "${company.name}" and no new unique contacts found.`,
+                    );
+                    result.failed += groupRows.length;
+                    continue;
+                }
+
+            } else {
+                // CREATE NEW LEAD with combined contacts
+                const leadData: Partial<ILead> = {
+                    company,
+                    address: mainRow.address ? String(mainRow.address) : '',
+                    country: String(mainRow.country),
+                    notes: mainRow.notes ? String(mainRow.notes) : '',
+                    contactPersons: uniqueFileContacts,
+                    status: (mainRow.status as ILead['status']) || 'new',
+                    source: 'imported',
+                    importBatch: {
+                        batchId,
+                        importedAt,
+                        importedBy: new Types.ObjectId(userId),
+                        fileName: fileName || undefined,
+                        totalCount: rows.length, // Total in file, not just this group
+                    },
+                    group: groupId ? new Types.ObjectId(groupId) : undefined,
+                    owner: new Types.ObjectId(userId),
+                    activities: [
+                        {
+                            status: 'new',
+                            byUser: new Types.ObjectId(userId),
+                            at: new Date(),
+                            notes: `Lead imported via bulk upload${fileName ? ` from "${fileName}"` : ''}${groupId ? ' with group assignment' : ''}. Found ${uniqueFileContacts.length} contact person(s).`,
+                        },
+                    ],
+                };
+
+                const newLead = await LeadModel.create(leadData);
+                
+                await createLog({
+                    userId,
+                    action: 'create_lead',
+                    entityType: 'lead',
+                    entityId: newLead._id.toString(),
+                    description: `Lead "${company.name}" imported with ${uniqueFileContacts.length} contact(s).`,
+                    data: { country: leadData.country, status: leadData.status },
+                });
+
+                result.successful += groupRows.length;
             }
 
-            await LeadModel.create(leadData);
-            result.successful++;
         } catch (error) {
             result.errors.push(
-                `Row ${rowNumber}: ${
+                `Rows ${rowNumbers.join(', ')}: ${
                     error instanceof Error ? error.message : 'Unknown error'
                 }`,
             );
-            result.failed++;
+            result.failed += groupRows.length;
         }
     }
 
@@ -675,7 +787,7 @@ async function importLeadsFromData(
         userId,
         action: 'bulk_import_leads',
         entityType: 'lead',
-        description: `Bulk imported ${result.successful}/${result.total} leads.`,
+        description: `Bulk import completed. Processed ${rows.length} rows. Successful: ${result.successful}, Failed: ${result.failed}`,
         data: result,
     });
 

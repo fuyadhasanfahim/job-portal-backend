@@ -19,4 +19,6 @@ router.get(
 
 router.get('/get-all-users-table', requireAuth, logController.getAllUsersTable);
 
+router.get('/get-activity-logs', requireAuth, logController.getActivityLogs);
+
 export const logRoute = router;

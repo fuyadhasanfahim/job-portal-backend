@@ -205,12 +205,79 @@ async function getAllUsersTable(req: Request, res: Response) {
     }
 }
 
+// NEW: Get activity logs
+async function getActivityLogs(req: Request, res: Response) {
+    try {
+        const role = req.auth?.role;
+
+        if (role !== Roles.SUPER_ADMIN && role !== Roles.ADMIN) {
+            return res.status(403).json({
+                success: false,
+                message: 'Forbidden: Insufficient permissions',
+            });
+        }
+
+        const {
+            page = '1',
+            limit = '20',
+            search = '',
+            userId,
+            action,
+            entityType,
+            startDate,
+            endDate,
+            level,
+        } = req.query as {
+            page?: string;
+            limit?: string;
+            search?: string;
+            userId?: string;
+            action?: string;
+            entityType?: string;
+            startDate?: string;
+            endDate?: string;
+            level?: string;
+        };
+
+        const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+        const parsedLimit = Math.min(
+            Math.max(parseInt(limit, 10) || 20, 1),
+            100,
+        );
+
+        const result = await LogServices.getActivityLogsFromDB({
+            page: parsedPage,
+            limit: parsedLimit,
+            search: search || '',
+            userId: userId || undefined,
+            action: action || undefined,
+            entityType: entityType || undefined,
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
+            level: level || undefined,
+        });
+
+        return res.json({
+            success: true,
+            message: 'Activity logs fetched successfully',
+            ...result,
+        });
+    } catch (error) {
+        console.error('Error fetching activity logs:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch activity logs',
+        });
+    }
+}
+
 const logController = {
     getLeadAnalytics,
     getTopUsers,
     getUserLeadStats,
     getTopUsersPieChart,
     getAllUsersTable,
+    getActivityLogs,
 };
 
 export default logController;
