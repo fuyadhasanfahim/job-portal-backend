@@ -63,15 +63,21 @@ async function getLeadsFromDB({
 
     // Exclude leads that are in active (non-completed) tasks
     const activeTasks = await TaskModel.find({
-        status: { $nin: ['completed', 'cancelled'] }
-    }).select('leads').lean();
-    
+        status: { $nin: ['completed', 'cancelled'] },
+    })
+        .select('leads')
+        .lean();
+
     const leadsInActiveTasks = new Set(
-        activeTasks.flatMap(t => t.leads?.map(id => id.toString()) || [])
+        activeTasks.flatMap((t) => t.leads?.map((id) => id.toString()) || []),
     );
-    
+
     if (leadsInActiveTasks.size > 0) {
-        query._id = { $nin: Array.from(leadsInActiveTasks).map(id => new Types.ObjectId(id)) };
+        query._id = {
+            $nin: Array.from(leadsInActiveTasks).map(
+                (id) => new Types.ObjectId(id),
+            ),
+        };
     }
 
     // Allow filtering by selectedUserId if provided (for any user)
@@ -104,25 +110,29 @@ async function getLeadsFromDB({
             // Has both email and phone
             query.$and = [
                 { 'contactPersons.emails.0': { $exists: true } },
-                { 'contactPersons.phones.0': { $exists: true } }
+                { 'contactPersons.phones.0': { $exists: true } },
             ];
         } else if (contactFilter === 'email-only') {
             // Has at least one email, but no phones
             query.$and = [
                 { 'contactPersons.emails.0': { $exists: true } },
-                { $or: [
-                    { 'contactPersons.phones': { $size: 0 } },
-                    { 'contactPersons.phones.0': { $exists: false } }
-                ]}
+                {
+                    $or: [
+                        { 'contactPersons.phones': { $size: 0 } },
+                        { 'contactPersons.phones.0': { $exists: false } },
+                    ],
+                },
             ];
         } else if (contactFilter === 'phone-only') {
             // Has at least one phone, but no emails
             query.$and = [
                 { 'contactPersons.phones.0': { $exists: true } },
-                { $or: [
-                    { 'contactPersons.emails': { $size: 0 } },
-                    { 'contactPersons.emails.0': { $exists: false } }
-                ]}
+                {
+                    $or: [
+                        { 'contactPersons.emails': { $size: 0 } },
+                        { 'contactPersons.emails.0': { $exists: false } },
+                    ],
+                },
             ];
         }
     }
@@ -623,7 +633,7 @@ async function importLeadsFromData(
                   .replace(/^https?:\/\/(www\.)?/, '')
                   .replace(/\/$/, '')
             : '';
-        
+
         // Key to identify unique companies: Name + Normalized Website
         const companyNameValue = String(row.companyName);
         const key = `${companyNameValue.trim().toLowerCase()}|${normalizedWebsite}`;
@@ -638,7 +648,7 @@ async function importLeadsFromData(
                 rowNumbers: [],
             });
         }
-        
+
         groupedRows.get(key)!.rows.push(row);
         groupedRows.get(key)!.rowNumbers.push(rowNumber);
     }
@@ -658,18 +668,21 @@ async function importLeadsFromData(
         try {
             // Collect all unique contact persons from all rows in this group
             const allContactPersons: IContactPerson[] = [];
-            
+
             for (const row of groupRows) {
                 const contacts = await parseContactPersons(row);
                 allContactPersons.push(...contacts);
             }
 
-            // Remove duplicates within the file itself based on email
-            const uniqueFileContacts = allContactPersons.filter((contact, index, self) =>
-                index === self.findIndex((c) => (
-                    c.emails[0] && contact.emails[0] && c.emails[0] === contact.emails[0]
-                ))
-            );
+            // Remove duplicates within the file itself based on email using a Map for O(N) performance
+            const uniqueContactsMap = new Map<string, IContactPerson>();
+            for (const contact of allContactPersons) {
+                const email = contact.emails[0];
+                if (email && !uniqueContactsMap.has(email)) {
+                    uniqueContactsMap.set(email, contact);
+                }
+            }
+            const uniqueFileContacts = Array.from(uniqueContactsMap.values());
 
             // Check if lead exists in DB
             const normalizedWebsite = company.website
@@ -705,12 +718,12 @@ async function importLeadsFromData(
             if (existingLead) {
                 // UPDATE EXISTING LEAD
                 let newContactsAdded = 0;
-                
+
                 // Merge new contacts if they don't exist
                 for (const newContact of uniqueFileContacts) {
                     const newEmail = newContact.emails[0];
                     const existingContact = existingLead.contactPersons.find(
-                        (c) => c.emails[0] === newEmail
+                        (c) => c.emails[0] === newEmail,
                     );
 
                     if (!existingContact) {
@@ -721,24 +734,16 @@ async function importLeadsFromData(
 
                 if (newContactsAdded > 0) {
                     await existingLead.save();
-                    await createLog({
-                        userId,
-                        action: 'update_lead',
-                        entityType: 'lead',
-                        entityId: existingLead._id.toString(),
-                        description: `Imported lead merged: Added ${newContactsAdded} new contact person(s) to "${company.name}".`,
-                        data: { addedContacts: newContactsAdded },
-                    });
+                    // Removed per-lead logging to prevent timeout on large imports
                     result.successful += groupRows.length; // Count all rows as successful
                 } else {
                     // Duplicate lead with no new info
-                     result.errors.push(
+                    result.errors.push(
                         `Rows ${rowNumbers.join(', ')}: Lead already exists for "${company.name}" and no new unique contacts found.`,
                     );
                     result.failed += groupRows.length;
                     continue;
                 }
-
             } else {
                 // CREATE NEW LEAD with combined contacts
                 const leadData: Partial<ILead> = {
@@ -769,19 +774,11 @@ async function importLeadsFromData(
                 };
 
                 const newLead = await LeadModel.create(leadData);
-                
-                await createLog({
-                    userId,
-                    action: 'create_lead',
-                    entityType: 'lead',
-                    entityId: newLead._id.toString(),
-                    description: `Lead "${company.name}" imported with ${uniqueFileContacts.length} contact(s).`,
-                    data: { country: leadData.country, status: leadData.status },
-                });
+
+                // Removed per-lead logging to prevent timeout on large imports
 
                 result.successful += groupRows.length;
             }
-
         } catch (error) {
             result.errors.push(
                 `Rows ${rowNumbers.join(', ')}: ${
