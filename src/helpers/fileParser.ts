@@ -31,11 +31,25 @@ export async function parseExcel(filePath: string): Promise<ParsedRow[]> {
     return rows;
 }
 
+export interface ImportErrorRow {
+    rowNumber: number;
+    companyName: string | undefined;
+    website: string | undefined;
+    contactEmail: string | undefined;
+    country: string | undefined;
+    errorType: 'validation' | 'duplicate' | 'processing';
+    errorMessage: string;
+}
+
 export interface ImportResult {
     total: number;
-    successful: number;
-    failed: number;
+    successful: number; // New leads created
+    merged: number; // Contacts merged into existing leads
+    duplicatesInFile: number; // Duplicate rows within the file itself (same company)
+    duplicatesInDb: number; // Leads that already existed in DB with no new contacts
+    failed: number; // Rows with errors
     errors: string[];
+    errorRows: ImportErrorRow[];
 }
 
 export async function parseEmails(
@@ -201,7 +215,9 @@ const OPTIONAL_COLUMNS = [
 /**
  * Validates if the parsed file has the required columns for lead import
  */
-export function validateImportSchema(rows: ParsedRow[]): SchemaValidationResult {
+export function validateImportSchema(
+    rows: ParsedRow[],
+): SchemaValidationResult {
     const result: SchemaValidationResult = {
         valid: true,
         errors: [],
@@ -239,7 +255,7 @@ export function validateImportSchema(rows: ParsedRow[]): SchemaValidationResult 
 
     // Normalize column names for comparison (case-insensitive, trim whitespace)
     const normalizedColumns = detectedColumns.map((col) =>
-        col.toLowerCase().trim().replace(/\s+/g, '')
+        col.toLowerCase().trim().replace(/\s+/g, ''),
     );
 
     // Check required columns
@@ -258,16 +274,15 @@ export function validateImportSchema(rows: ParsedRow[]): SchemaValidationResult 
     // Contact columns are now optional - no validation required
 
     // Check for unknown columns (warnings only)
-    const allKnownColumns = [
-        ...REQUIRED_COLUMNS,
-        ...OPTIONAL_COLUMNS,
-    ].map((c) => c.toLowerCase());
+    const allKnownColumns = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS].map(
+        (c) => c.toLowerCase(),
+    );
 
     for (const col of detectedColumns) {
         const normalizedCol = col.toLowerCase().trim().replace(/\s+/g, '');
         if (!allKnownColumns.includes(normalizedCol)) {
             result.warnings.push(
-                `Unknown column "${col}" will be ignored during import.`
+                `Unknown column "${col}" will be ignored during import.`,
             );
         }
     }
@@ -292,7 +307,7 @@ export interface RowValidationOptions {
 export function validateRowData(
     row: ParsedRow,
     rowIndex: number,
-    options: RowValidationOptions = {}
+    options: RowValidationOptions = {},
 ): RowValidationError[] {
     const errors: RowValidationError[] = [];
     const rowNumber = rowIndex + 2; // +2 because index is 0-based and we skip header row

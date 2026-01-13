@@ -31,6 +31,7 @@ async function getLeads(req: Request, res: Response) {
             source = '',
             importBatchId = '',
             contactFilter = 'all',
+            dueDate = '',
         } = req.query as {
             page: string;
             limit: string;
@@ -46,6 +47,7 @@ async function getLeads(req: Request, res: Response) {
             source: string;
             importBatchId: string;
             contactFilter: 'all' | 'email-only' | 'phone-only';
+            dueDate: string;
         };
 
         const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
@@ -90,6 +92,7 @@ async function getLeads(req: Request, res: Response) {
             selectedUserId,
             ...(group.trim() ? { group: group.trim() } : {}),
             contactFilter: contactFilter as 'all' | 'email-only' | 'phone-only',
+            ...(dueDate.trim() ? { dueDate: dueDate.trim() } : {}),
         });
 
         return res.status(200).json({
@@ -171,6 +174,94 @@ async function getLeadsByDate(req: Request, res: Response) {
         });
     } catch (error) {
         console.error('getLeadsByDate error:', error);
+        return res.status(500).json({
+            success: false,
+            message: (error as Error).message || 'Failed to fetch leads',
+        });
+    }
+}
+
+async function getLeadsForTask(req: Request, res: Response) {
+    try {
+        const {
+            page = '1',
+            limit = '10',
+            search = '',
+            status = '',
+            sortBy = 'createdAt',
+            sortOrder = 'desc',
+            country = '',
+            group = '',
+            contactFilter = 'all',
+        } = req.query as {
+            page: string;
+            limit: string;
+            search: string;
+            status: string;
+            sortBy: string;
+            sortOrder: string;
+            country: string;
+            group: string;
+            contactFilter:
+                | 'all'
+                | 'email-only'
+                | 'phone-only'
+                | 'email-with-phone';
+        };
+
+        const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+        const parsedLimit = Math.min(
+            Math.max(parseInt(limit, 10) || 10, 1),
+            100,
+        );
+
+        const userId = req.auth?.id;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized: Missing user authentication',
+            });
+        }
+
+        const validSortOrder = sortOrder === 'asc' ? 'asc' : 'desc';
+        const validSortBy = [
+            'createdAt',
+            'company.name',
+            'status',
+            'country',
+        ].includes(sortBy)
+            ? sortBy
+            : 'createdAt';
+
+        const result = await LeadService.getLeadsForTaskCreation({
+            page: parsedPage,
+            limit: parsedLimit,
+            sortBy: validSortBy,
+            sortOrder: validSortOrder,
+            userId,
+            ...(search.trim() ? { search: search.trim() } : {}),
+            ...(status.trim() ? { status: status.trim() } : {}),
+            ...(country.trim() ? { country: country.trim() } : {}),
+            ...(group.trim() ? { group: group.trim() } : {}),
+            contactFilter: contactFilter as
+                | 'all'
+                | 'email-only'
+                | 'phone-only'
+                | 'email-with-phone',
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Leads for task creation fetched successfully',
+            data: result.items,
+            pagination: {
+                totalItems: result.pagination?.totalItems ?? 0,
+                totalPages: result.pagination?.totalPages ?? 1,
+                currentPage: parsedPage,
+                limit: parsedLimit,
+            },
+        });
+    } catch (error) {
         return res.status(500).json({
             success: false,
             message: (error as Error).message || 'Failed to fetch leads',
@@ -400,7 +491,10 @@ async function importLeads(req: Request, res: Response) {
             const row = parsedData[i];
             if (!row) continue;
 
-            const errors = validateRowData(row, i, { requireEmail: emailRequired, requirePhone: phoneRequired });
+            const errors = validateRowData(row, i, {
+                requireEmail: emailRequired,
+                requirePhone: phoneRequired,
+            });
             if (errors.length > 0) {
                 rowErrors.push(...errors);
                 invalidRowIndices.add(i); // Track this row as invalid
@@ -435,6 +529,30 @@ async function importLeads(req: Request, res: Response) {
             ...importResult.errors,
         ];
 
+        // Combine validation errors into errorRows format
+        const validationErrorRows = rowErrors.map((e) => {
+            const row = parsedData[e.row - 2]; // row is 1-indexed + 1 for header
+            return {
+                rowNumber: e.row,
+                companyName: row?.companyName
+                    ? String(row.companyName)
+                    : undefined,
+                website: row?.website ? String(row.website) : undefined,
+                contactEmail: row?.contactEmail
+                    ? String(row.contactEmail)
+                    : undefined,
+                country: row?.country ? String(row.country) : undefined,
+                errorType: 'validation' as const,
+                errorMessage: e.message,
+            };
+        });
+
+        // Combine all error rows
+        const allErrorRows = [
+            ...validationErrorRows,
+            ...importResult.errorRows,
+        ];
+
         // Calculate correct counts
         const skippedRowCount = invalidRowIndices.size; // Unique invalid rows count
 
@@ -444,11 +562,14 @@ async function importLeads(req: Request, res: Response) {
             results: {
                 total: parsedData.length,
                 validRows: validRows.length,
-                successful: importResult.successful,
-                duplicates: importResult.failed,
-                skippedRows: skippedRowCount, // Fixed: count unique rows, not errors
+                successful: importResult.successful, // New leads created
+                merged: importResult.merged, // Contacts merged into existing leads
+                duplicatesInFile: importResult.duplicatesInFile, // Same company rows in file
+                duplicatesInDb: importResult.duplicatesInDb, // Already existed, no new contacts
+                skippedRows: skippedRowCount, // Validation errors
                 errors: allErrors.slice(0, 100), // Limit errors in response
                 totalErrors: allErrors.length,
+                errorRows: allErrorRows, // Full error data for Excel download
             },
             warnings: schemaValidation.warnings,
         });
@@ -707,6 +828,7 @@ const LeadController = {
     newLead,
     getLeads,
     getLeadsByDate,
+    getLeadsForTask,
     getLeadById,
     updateLead,
     importLeads,

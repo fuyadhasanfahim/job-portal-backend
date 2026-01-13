@@ -15,6 +15,7 @@ import type z from 'zod';
 import {
     parseContactPersons,
     type ImportResult,
+    type ImportErrorRow,
     type ParsedRow,
 } from '../helpers/fileParser.js';
 import TaskModel from '../models/task.model.js';
@@ -40,6 +41,7 @@ async function getLeadsFromDB({
     source,
     importBatchId,
     contactFilter,
+    dueDate,
 }: {
     page?: number;
     limit?: number;
@@ -55,30 +57,14 @@ async function getLeadsFromDB({
     source?: string;
     importBatchId?: string;
     contactFilter?: 'all' | 'email-only' | 'phone-only' | 'email-with-phone';
+    dueDate?: string | Date;
 }) {
     const query: FilterQuery<ILead> = {};
 
     const user = await UserModel.findById(userId).lean();
     if (!user) throw new Error('User not found');
 
-    // Exclude leads that are in active (non-completed) tasks
-    const activeTasks = await TaskModel.find({
-        status: { $nin: ['completed', 'cancelled'] },
-    })
-        .select('leads')
-        .lean();
-
-    const leadsInActiveTasks = new Set(
-        activeTasks.flatMap((t) => t.leads?.map((id) => id.toString()) || []),
-    );
-
-    if (leadsInActiveTasks.size > 0) {
-        query._id = {
-            $nin: Array.from(leadsInActiveTasks).map(
-                (id) => new Types.ObjectId(id),
-            ),
-        };
-    }
+    // All leads are shown regardless of task status
 
     // Allow filtering by selectedUserId if provided (for any user)
     if (selectedUserId && selectedUserId !== 'all-user') {
@@ -143,6 +129,15 @@ async function getLeadsFromDB({
         const dayEnd = new Date(date);
         dayEnd.setHours(23, 59, 59, 999);
         query.createdAt = { $gte: dayStart, $lte: dayEnd };
+    }
+
+    // Filter by activity due date
+    if (dueDate) {
+        const dueDayStart = new Date(dueDate);
+        dueDayStart.setHours(0, 0, 0, 0);
+        const dueDayEnd = new Date(dueDate);
+        dueDayEnd.setHours(23, 59, 59, 999);
+        query['activities.dueAt'] = { $gte: dueDayStart, $lte: dueDayEnd };
     }
 
     if (country && country !== 'all') {
@@ -301,6 +296,186 @@ async function getLeadsByDateFromDB({
             totalPages: Math.ceil(total / limit),
             currentPage: page,
             limit,
+        },
+    };
+}
+
+/**
+ * Get leads available for task creation
+ * - Shows leads that are NOT in any active (non-completed/cancelled) task
+ * - Supports contact filter (all, email+phone, email-only, phone-only)
+ * - Also returns info about which leads are in in-progress tasks for visibility
+ */
+async function getLeadsForTaskCreation({
+    page = 1,
+    limit = 10,
+    search,
+    status,
+    sortBy = 'createdAt',
+    sortOrder = 'desc',
+    country,
+    userId,
+    group,
+    contactFilter,
+}: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+    country?: string;
+    userId: string;
+    group?: string;
+    contactFilter?: 'all' | 'email-only' | 'phone-only' | 'email-with-phone';
+}) {
+    const query: FilterQuery<ILead> = {};
+
+    const user = await UserModel.findById(userId).lean();
+    if (!user) throw new Error('User not found');
+
+    // Get leads that are in active (non-completed/cancelled) tasks - these should be excluded
+    const activeTasks = await TaskModel.find({
+        status: { $nin: ['completed', 'cancelled'] },
+    })
+        .select('leads status')
+        .lean();
+
+    const leadsInActiveTasks = new Set(
+        activeTasks.flatMap((t) => t.leads?.map((id) => id.toString()) || []),
+    );
+
+    // Exclude leads in active tasks from the main query
+    if (leadsInActiveTasks.size > 0) {
+        query._id = {
+            $nin: Array.from(leadsInActiveTasks).map(
+                (id) => new Types.ObjectId(id),
+            ),
+        };
+    }
+
+    // Status filter
+    if (status && status !== 'all') {
+        query.status = status;
+    }
+
+    // Group filter
+    if (group && group !== 'all') {
+        query.group = new Types.ObjectId(group);
+    }
+
+    // Country filter
+    if (country && country !== 'all') {
+        query.country = { $regex: country, $options: 'i' };
+    }
+
+    // Contact filter - same logic as getLeadsFromDB
+    if (contactFilter && contactFilter !== 'all') {
+        if (contactFilter === 'email-with-phone') {
+            query.$and = [
+                { 'contactPersons.emails.0': { $exists: true } },
+                { 'contactPersons.phones.0': { $exists: true } },
+            ];
+        } else if (contactFilter === 'email-only') {
+            query.$and = [
+                { 'contactPersons.emails.0': { $exists: true } },
+                {
+                    $or: [
+                        { 'contactPersons.phones': { $size: 0 } },
+                        { 'contactPersons.phones.0': { $exists: false } },
+                    ],
+                },
+            ];
+        } else if (contactFilter === 'phone-only') {
+            query.$and = [
+                { 'contactPersons.phones.0': { $exists: true } },
+                {
+                    $or: [
+                        { 'contactPersons.emails': { $size: 0 } },
+                        { 'contactPersons.emails.0': { $exists: false } },
+                    ],
+                },
+            ];
+        }
+    }
+
+    // Search filter
+    if (search && search.trim()) {
+        const regex = new RegExp(search.trim(), 'i');
+        const terms = search.trim().split(/\s+/);
+
+        if (terms.length > 1) {
+            const existingAnd = query.$and || [];
+            query.$and = [
+                ...existingAnd,
+                {
+                    $or: [
+                        { 'company.name': regex },
+                        { 'company.website': regex },
+                        { 'contactPersons.firstName': regex },
+                        { 'contactPersons.lastName': regex },
+                        { 'contactPersons.emails': regex },
+                        { 'contactPersons.phones': regex },
+                        { country: regex },
+                        {
+                            'contactPersons.firstName': new RegExp(
+                                terms[0] || '',
+                                'i',
+                            ),
+                            'contactPersons.lastName': new RegExp(
+                                terms.slice(1).join(' '),
+                                'i',
+                            ),
+                        },
+                    ],
+                },
+            ];
+        } else {
+            const existingAnd = query.$and || [];
+            query.$and = [
+                ...existingAnd,
+                {
+                    $or: [
+                        { 'company.name': regex },
+                        { 'company.website': regex },
+                        { 'contactPersons.firstName': regex },
+                        { 'contactPersons.lastName': regex },
+                        { 'contactPersons.emails': regex },
+                        { 'contactPersons.phones': regex },
+                        { country: regex },
+                    ],
+                },
+            ];
+        }
+    }
+
+    const skip = (page - 1) * limit;
+    const sortDirection = sortOrder === 'asc' ? 1 : -1;
+
+    const [items, total] = await Promise.all([
+        LeadModel.find(query)
+            .sort({ [sortBy]: sortDirection })
+            .skip(skip)
+            .limit(limit)
+            .populate({
+                path: 'owner',
+                select: 'firstName lastName email role',
+            })
+            .populate({
+                path: 'group',
+                select: 'name color',
+            })
+            .lean(),
+        LeadModel.countDocuments(query),
+    ]);
+
+    return {
+        items,
+        pagination: {
+            totalItems: total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
         },
     };
 }
@@ -595,8 +770,12 @@ async function importLeadsFromData(
     const result: ImportResult = {
         total: rows.length,
         successful: 0,
+        merged: 0,
+        duplicatesInFile: 0,
+        duplicatesInDb: 0,
         failed: 0,
         errors: [],
+        errorRows: [],
     };
 
     // Generate a unique batch ID for this import
@@ -618,9 +797,22 @@ async function importLeadsFromData(
         const rowNumber = i + 2;
 
         if (!row?.companyName || !row.country) {
-            result.errors.push(
-                `Row ${rowNumber}: Missing required fields (companyName and country)`,
-            );
+            const errorMsg = `Row ${rowNumber}: Missing required fields (companyName and country)`;
+            result.errors.push(errorMsg);
+            result.errorRows.push({
+                rowNumber,
+                companyName: row?.companyName
+                    ? String(row.companyName)
+                    : undefined,
+                website: row?.website ? String(row.website) : undefined,
+                contactEmail: row?.contactEmail
+                    ? String(row.contactEmail)
+                    : undefined,
+                country: row?.country ? String(row.country) : undefined,
+                errorType: 'validation',
+                errorMessage:
+                    'Missing required fields (companyName and country)',
+            });
             result.failed++;
             continue;
         }
@@ -657,6 +849,11 @@ async function importLeadsFromData(
     for (const [, groupData] of groupedRows) {
         const { company, rows: groupRows, rowNumbers } = groupData;
         const mainRow = groupRows[0]; // Use first row for common data (address, country, etc.)
+
+        // Track file-level duplicates (same company in file = multiple rows merged)
+        if (groupRows.length > 1) {
+            result.duplicatesInFile += groupRows.length - 1;
+        }
 
         // Skip if no rows in group (shouldn't happen, but TypeScript safety)
         if (!mainRow) {
@@ -734,14 +931,30 @@ async function importLeadsFromData(
 
                 if (newContactsAdded > 0) {
                     await existingLead.save();
-                    // Removed per-lead logging to prevent timeout on large imports
-                    result.successful += groupRows.length; // Count all rows as successful
+                    // This is a MERGE - contacts added to existing lead
+                    result.merged += groupRows.length;
                 } else {
-                    // Duplicate lead with no new info
-                    result.errors.push(
-                        `Rows ${rowNumbers.join(', ')}: Lead already exists for "${company.name}" and no new unique contacts found.`,
-                    );
-                    result.failed += groupRows.length;
+                    // TRUE DUPLICATE - lead exists and no new contacts to add
+                    result.duplicatesInDb += groupRows.length;
+                    const errorMsg = `Rows ${rowNumbers.join(', ')}: Lead already exists for "${company.name}" and no new unique contacts found.`;
+                    result.errors.push(errorMsg);
+                    // Add each row to errorRows for Excel download
+                    for (const rowNum of rowNumbers) {
+                        const row = groupRows[rowNumbers.indexOf(rowNum)];
+                        result.errorRows.push({
+                            rowNumber: rowNum,
+                            companyName: company.name,
+                            website: company.website,
+                            contactEmail: row?.contactEmail
+                                ? String(row.contactEmail)
+                                : undefined,
+                            country: row?.country
+                                ? String(row.country)
+                                : undefined,
+                            errorType: 'duplicate',
+                            errorMessage: `Lead already exists for "${company.name}" - no new unique contacts`,
+                        });
+                    }
                     continue;
                 }
             } else {
@@ -1082,6 +1295,7 @@ const LeadService = {
     newLeadsInDB,
     getLeadsFromDB,
     getLeadsByDateFromDB,
+    getLeadsForTaskCreation,
     getLeadByIdFromDB,
     updateLeadInDB,
     importLeadsFromData,

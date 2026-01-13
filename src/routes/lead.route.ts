@@ -9,6 +9,7 @@ const router: Router = Router();
 // Get
 router.get('/get-leads', requireAuth, LeadController.getLeads);
 router.get('/get-leads-by-date', requireAuth, LeadController.getLeadsByDate);
+router.get('/get-leads-for-task', requireAuth, LeadController.getLeadsForTask);
 router.get('/get-lead/:id', requireAuth, LeadController.getLeadById);
 router.get(
     '/search-by-company',
