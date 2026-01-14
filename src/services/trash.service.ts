@@ -45,10 +45,39 @@ async function moveToTrash(
     });
 
     // Remove lead from any tasks
-    await TaskModel.updateMany(
-        { leads: lead._id },
-        { $pull: { leads: lead._id, completedLeads: lead._id } },
-    );
+    // Remove lead from any tasks and update metrics
+    const associatedTasks = await TaskModel.find({ leads: leadId });
+
+    for (const task of associatedTasks) {
+        // Remove from leads array
+        if (task.leads && task.leads.length > 0) {
+            task.leads = task.leads.filter((id) => id.toString() !== leadId);
+            task.markModified('leads');
+        }
+
+        // Remove from completedLeads array
+        if (task.completedLeads && task.completedLeads.length > 0) {
+            task.completedLeads = task.completedLeads.filter(
+                (id) => id.toString() !== leadId,
+            );
+            task.markModified('completedLeads');
+        }
+
+        // Update metrics
+        if (!task.metrics) {
+            task.metrics = { done: 0, total: 0 };
+        }
+
+        task.metrics.total = task.leads?.length || 0;
+        task.metrics.done = task.completedLeads?.length || 0;
+        task.quantity = task.metrics.total; // Sync quantity with actual leads count
+
+        task.markModified('metrics');
+        task.markModified('quantity');
+
+        // Save triggers the pre-save hook which recalculates progress and status
+        await task.save();
+    }
 
     // Delete the original lead
     await LeadModel.findByIdAndDelete(leadId);
@@ -158,6 +187,8 @@ async function restoreFromTrash(
         contactPersons: trashedLead.leadData.contactPersons,
         status: trashedLead.leadData.status,
         owner: trashedLead.leadData.owner,
+        createdBy: new Types.ObjectId(userId), // Restored by this user
+        updatedBy: new Types.ObjectId(userId), // Restored by this user
         activities: [
             ...(trashedLead.leadData.activities || []),
             {
@@ -227,7 +258,7 @@ async function bulkMoveToTrash(
     reason?: string,
 ): Promise<{ success: number; failed: number; errors: string[] }> {
     const results = { success: 0, failed: 0, errors: [] as string[] };
-    
+
     for (const leadId of leadIds) {
         try {
             await moveToTrash(leadId, userId, reason);
@@ -237,7 +268,7 @@ async function bulkMoveToTrash(
             results.errors.push(`Lead ${leadId}: ${(error as Error).message}`);
         }
     }
-    
+
     return results;
 }
 

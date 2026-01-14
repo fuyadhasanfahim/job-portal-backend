@@ -61,6 +61,14 @@ const UserSchema = new Schema<IUser>(
 
         // Password history (stores last 5 password hashes)
         passwordHistory: [{ type: String }],
+
+        // Table column preferences per page
+        tablePreferences: {
+            leads: [{ type: String }],
+            createTask: [{ type: String }],
+            schedules: [{ type: String }],
+            taskDetails: [{ type: String }],
+        },
     },
     { timestamps: true },
 );

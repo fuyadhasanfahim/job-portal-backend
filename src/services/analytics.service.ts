@@ -51,9 +51,10 @@ async function getOverviewStats(range: DateRange = {}) {
         LeadModel.countDocuments({ status: 'on-board', ...dateFilter }),
     ]);
 
-    const conversionRate = totalLeads > 0 
-        ? Math.round((onBoardLeads / totalLeads) * 100 * 10) / 10 
-        : 0;
+    const conversionRate =
+        totalLeads > 0
+            ? Math.round((onBoardLeads / totalLeads) * 100 * 10) / 10
+            : 0;
 
     return {
         totalLeads,
@@ -79,8 +80,8 @@ async function getLeadStatusDistribution(range: DateRange = {}) {
     ]);
 
     const statusColors: Record<string, string> = {
-        'new': '#3b82f6',
-        'interested': '#22c55e',
+        new: '#3b82f6',
+        interested: '#22c55e',
         'not-interested': '#ef4444',
         'call-back': '#f59e0b',
         'on-board': '#10b981',
@@ -100,7 +101,7 @@ async function getLeadStatusDistribution(range: DateRange = {}) {
 // Lead Trends for Line Chart
 async function getLeadTrends(
     period: 'daily' | 'weekly' | 'monthly' = 'daily',
-    range: DateRange = {}
+    range: DateRange = {},
 ) {
     let dateFormat: string;
     let daysBack: number;
@@ -119,13 +120,11 @@ async function getLeadTrends(
             daysBack = 30;
     }
 
-    const startDate = range.startDate 
-        ? new Date(range.startDate) 
+    const startDate = range.startDate
+        ? new Date(range.startDate)
         : new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
 
-    const endDate = range.endDate 
-        ? new Date(range.endDate) 
-        : new Date();
+    const endDate = range.endDate ? new Date(range.endDate) : new Date();
 
     const trends = await LeadModel.aggregate([
         {
@@ -135,7 +134,9 @@ async function getLeadTrends(
         },
         {
             $group: {
-                _id: { $dateToString: { format: dateFormat, date: '$createdAt' } },
+                _id: {
+                    $dateToString: { format: dateFormat, date: '$createdAt' },
+                },
                 count: { $sum: 1 },
                 interested: {
                     $sum: { $cond: [{ $eq: ['$status', 'interested'] }, 1, 0] },
@@ -242,9 +243,9 @@ async function getSourceBreakdown(range: DateRange = {}) {
     ]);
 
     const sourceColors: Record<string, string> = {
-        'manual': '#3b82f6',
-        'imported': '#22c55e',
-        'website': '#8b5cf6',
+        manual: '#3b82f6',
+        imported: '#22c55e',
+        website: '#8b5cf6',
     };
 
     return sources.map((s) => ({
@@ -284,6 +285,130 @@ async function getActivityTimeline(range: DateRange = {}, limit = 20) {
     return activities;
 }
 
+// Team Activity Breakdown - User-wise and Status-wise with filters and pagination
+interface TeamActivityParams extends DateRange {
+    userId?: string;
+    status?: string;
+    groupId?: string;
+    page?: number;
+    limit?: number;
+}
+
+async function getTeamActivityBreakdown(params: TeamActivityParams = {}) {
+    const { userId, status, groupId, page = 1, limit = 10 } = params;
+
+    // Default to today if no range specified
+    let startDate: Date;
+    let endDate: Date;
+
+    if (params.startDate) {
+        startDate = new Date(params.startDate);
+        startDate.setHours(0, 0, 0, 0);
+    } else {
+        startDate = new Date();
+        startDate.setHours(0, 0, 0, 0);
+    }
+
+    if (params.endDate) {
+        endDate = new Date(params.endDate);
+        endDate.setHours(23, 59, 59, 999);
+    } else {
+        endDate = new Date();
+        endDate.setHours(23, 59, 59, 999);
+    }
+
+    // Build match stage with filters
+    const matchStage: Record<string, unknown> = {
+        updatedAt: { $gte: startDate, $lte: endDate },
+        updatedBy: { $exists: true, $ne: null },
+    };
+
+    if (userId && userId !== 'all') {
+        matchStage.updatedBy = new Types.ObjectId(userId);
+    }
+    if (status && status !== 'all') {
+        matchStage.status = status;
+    }
+    if (groupId && groupId !== 'all') {
+        matchStage.group = new Types.ObjectId(groupId);
+    }
+
+    // Get all leads updated in the date range, grouped by updatedBy user and status
+    const breakdown = await LeadModel.aggregate([
+        { $match: matchStage },
+        {
+            $group: {
+                _id: {
+                    user: '$updatedBy',
+                    status: '$status',
+                },
+                count: { $sum: 1 },
+            },
+        },
+        {
+            $group: {
+                _id: '$_id.user',
+                statusBreakdown: {
+                    $push: {
+                        status: '$_id.status',
+                        count: '$count',
+                    },
+                },
+                total: { $sum: '$count' },
+            },
+        },
+        {
+            $lookup: {
+                from: 'users',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'user',
+            },
+        },
+        { $unwind: '$user' },
+        {
+            $project: {
+                _id: 1,
+                total: 1,
+                statusBreakdown: 1,
+                name: {
+                    $concat: [
+                        '$user.firstName',
+                        ' ',
+                        { $ifNull: ['$user.lastName', ''] },
+                    ],
+                },
+                role: '$user.role',
+                image: '$user.image',
+            },
+        },
+        { $sort: { total: -1 } },
+    ]);
+
+    // Calculate grand total (before pagination)
+    const grandTotal = breakdown.reduce((sum, user) => sum + user.total, 0);
+    const totalUsers = breakdown.length;
+
+    // Apply pagination
+    const skip = (page - 1) * limit;
+    const paginatedUsers = breakdown.slice(skip, skip + limit);
+
+    return {
+        grandTotal,
+        users: paginatedUsers,
+        pagination: {
+            page,
+            limit,
+            totalUsers,
+            totalPages: Math.ceil(totalUsers / limit),
+        },
+        dateRange: {
+            from: startDate.toISOString(),
+            to: endDate.toISOString(),
+        },
+    };
+}
+
 const AnalyticsService = {
     getOverviewStats,
     getLeadStatusDistribution,
@@ -293,6 +418,7 @@ const AnalyticsService = {
     getSourceBreakdown,
     getCountryDistribution,
     getActivityTimeline,
+    getTeamActivityBreakdown,
 };
 
 export default AnalyticsService;

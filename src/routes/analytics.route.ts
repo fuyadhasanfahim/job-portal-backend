@@ -7,10 +7,19 @@ const router: Router = Router();
 router.get('/overview', requireAuth, analyticsController.getOverview);
 router.get('/lead-status', requireAuth, analyticsController.getLeadStatus);
 router.get('/lead-trends', requireAuth, analyticsController.getLeadTrends);
-router.get('/task-performance', requireAuth, analyticsController.getTaskPerformance);
-router.get('/user-performance', requireAuth, analyticsController.getUserPerformance);
+router.get(
+    '/task-performance',
+    requireAuth,
+    analyticsController.getTaskPerformance,
+);
+router.get(
+    '/user-performance',
+    requireAuth,
+    analyticsController.getUserPerformance,
+);
 router.get('/sources', requireAuth, analyticsController.getSources);
 router.get('/countries', requireAuth, analyticsController.getCountries);
 router.get('/activity', requireAuth, analyticsController.getActivity);
+router.get('/todays-work', requireAuth, analyticsController.getTodaysWork);
 
 export const analyticsRoute = router;

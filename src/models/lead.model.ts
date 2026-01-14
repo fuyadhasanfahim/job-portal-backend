@@ -106,6 +106,9 @@ const LeadSchema = new Schema<ILead>(
         importBatch: { type: ImportBatchSchema, default: null },
         owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         activities: [ActivitySchema],
+        // Tracking fields for who created/updated the lead
+        createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+        updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     },
     { timestamps: true },
 );

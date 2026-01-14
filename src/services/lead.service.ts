@@ -1,4 +1,4 @@
-import { Types, type FilterQuery } from 'mongoose';
+import { Types, type FilterQuery, type AnyBulkWriteOperation } from 'mongoose';
 import LeadModel from '../models/lead.model.js';
 import UserModel from '../models/user.model.js';
 import type {
@@ -205,6 +205,14 @@ async function getLeadsFromDB({
                 path: 'group',
                 select: 'name color',
             })
+            .populate({
+                path: 'createdBy',
+                select: 'firstName lastName',
+            })
+            .populate({
+                path: 'updatedBy',
+                select: 'firstName lastName',
+            })
             .lean(),
         LeadModel.countDocuments(query),
     ]);
@@ -278,6 +286,14 @@ async function getLeadsByDateFromDB({
                 path: 'activities.byUser',
                 select: 'firstName lastName email',
             })
+            .populate({
+                path: 'createdBy',
+                select: 'firstName lastName',
+            })
+            .populate({
+                path: 'updatedBy',
+                select: 'firstName lastName',
+            })
             .lean(),
         LeadModel.countDocuments(query),
     ]);
@@ -317,6 +333,10 @@ async function getLeadsForTaskCreation({
     userId,
     group,
     contactFilter,
+    date,
+    dueDate,
+    source,
+    selectedUserId,
 }: {
     page?: number;
     limit?: number;
@@ -328,6 +348,10 @@ async function getLeadsForTaskCreation({
     userId: string;
     group?: string;
     contactFilter?: 'all' | 'email-only' | 'phone-only' | 'email-with-phone';
+    date?: string | Date;
+    dueDate?: string | Date;
+    source?: string;
+    selectedUserId?: string;
 }) {
     const query: FilterQuery<ILead> = {};
 
@@ -352,6 +376,31 @@ async function getLeadsForTaskCreation({
                 (id) => new Types.ObjectId(id),
             ),
         };
+    }
+
+    // Protected status visibility filter
+    // Protected statuses: interested, test-trial, call-back, on-board
+    // Regular users can only see their OWN protected leads (where updatedBy = current user)
+    // Admins and team-leaders can see ALL protected leads
+    const PROTECTED_STATUSES = [
+        'interested',
+        'test-trial',
+        'call-back',
+        'on-board',
+    ];
+    const isPrivilegedUser = ['super-admin', 'admin', 'team-leader'].includes(
+        user.role,
+    );
+
+    if (!isPrivilegedUser) {
+        // For regular users: can see non-protected OR own protected leads
+        query.$or = [
+            { status: { $nin: PROTECTED_STATUSES } },
+            {
+                status: { $in: PROTECTED_STATUSES },
+                updatedBy: new Types.ObjectId(userId),
+            },
+        ];
     }
 
     // Status filter
@@ -397,6 +446,34 @@ async function getLeadsForTaskCreation({
                 },
             ];
         }
+    }
+
+    // Owner filter
+    if (selectedUserId && selectedUserId !== 'all-user') {
+        query.owner = new Types.ObjectId(selectedUserId);
+    }
+
+    // Source filter
+    if (source && source !== 'all') {
+        query.source = source;
+    }
+
+    // Date filter
+    if (date) {
+        const dayStart = new Date(date);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(date);
+        dayEnd.setHours(23, 59, 59, 999);
+        query.createdAt = { $gte: dayStart, $lte: dayEnd };
+    }
+
+    // Due Date filter
+    if (dueDate) {
+        const dueDayStart = new Date(dueDate);
+        dueDayStart.setHours(0, 0, 0, 0);
+        const dueDayEnd = new Date(dueDate);
+        dueDayEnd.setHours(23, 59, 59, 999);
+        query['activities.dueAt'] = { $gte: dueDayStart, $lte: dueDayEnd };
     }
 
     // Search filter
@@ -465,6 +542,14 @@ async function getLeadsForTaskCreation({
                 path: 'group',
                 select: 'name color',
             })
+            .populate({
+                path: 'createdBy',
+                select: 'firstName lastName',
+            })
+            .populate({
+                path: 'updatedBy',
+                select: 'firstName lastName',
+            })
             .lean(),
         LeadModel.countDocuments(query),
     ]);
@@ -496,6 +581,14 @@ async function getLeadByIdFromDB(id: string, userId: string, userRole: string) {
         .populate({
             path: 'group',
             select: 'name color',
+        })
+        .populate({
+            path: 'createdBy',
+            select: 'firstName lastName',
+        })
+        .populate({
+            path: 'updatedBy',
+            select: 'firstName lastName',
         })
         .lean();
 
@@ -551,6 +644,7 @@ async function newLeadsInDB(
                 at: activity.at || new Date(),
             })),
             owner: new Types.ObjectId(ownerId),
+            createdBy: new Types.ObjectId(ownerId),
         };
 
         const existingLead = await LeadModel.findOne({
@@ -745,6 +839,9 @@ async function updateLeadInDB(
 
         if (!Array.isArray(lead.activities)) lead.activities = [];
         lead.activities.push(activity);
+
+        // Track who updated the lead
+        lead.updatedBy = new Types.ObjectId(userId);
     }
 
     await lead.save();
@@ -845,6 +942,78 @@ async function importLeadsFromData(
         groupedRows.get(key)!.rowNumbers.push(rowNumber);
     }
 
+    // ========== OPTIMIZATION: Pre-fetch all existing leads in ONE query ==========
+    const allCompanyNames: string[] = [];
+    const allWebsites: string[] = [];
+
+    for (const [, groupData] of groupedRows) {
+        const normalizedName = groupData.company.name.toLowerCase().trim();
+        allCompanyNames.push(normalizedName);
+
+        if (groupData.company.website) {
+            const normalizedWebsite = groupData.company.website
+                .toLowerCase()
+                .replace(/^https?:\/\/(www\.)?/, '')
+                .replace(/\/$/, '');
+            if (normalizedWebsite) allWebsites.push(normalizedWebsite);
+        }
+    }
+
+    // Build OR conditions for bulk lookup
+    const lookupConditions: FilterQuery<ILead>[] = [];
+    if (allCompanyNames.length > 0) {
+        lookupConditions.push({
+            'company.name': {
+                $in: allCompanyNames.map(
+                    (n) => new RegExp(`^${escapeRegex(n)}$`, 'i'),
+                ),
+            },
+        });
+    }
+    if (allWebsites.length > 0) {
+        lookupConditions.push({
+            'company.website': {
+                $in: allWebsites.map((w) => new RegExp(escapeRegex(w), 'i')),
+            },
+        });
+    }
+
+    // Fetch ALL existing leads in a single query
+    const existingLeads =
+        lookupConditions.length > 0
+            ? await LeadModel.find(
+                  { $or: lookupConditions },
+                  {
+                      _id: 1,
+                      'company.name': 1,
+                      'company.website': 1,
+                      contactPersons: 1,
+                  },
+              ).lean()
+            : [];
+
+    // Create lookup maps for O(1) access
+    const existingLeadsByName = new Map<string, (typeof existingLeads)[0]>();
+    const existingLeadsByWebsite = new Map<string, (typeof existingLeads)[0]>();
+
+    for (const lead of existingLeads) {
+        const leadName = lead.company?.name
+            ? String(lead.company.name).toLowerCase().trim()
+            : '';
+        if (leadName) existingLeadsByName.set(leadName, lead);
+
+        const leadWebsite = lead.company?.website
+            ? String(lead.company.website)
+                  .toLowerCase()
+                  .replace(/^https?:\/\/(www\.)?/, '')
+                  .replace(/\/$/, '')
+            : '';
+        if (leadWebsite) existingLeadsByWebsite.set(leadWebsite, lead);
+    }
+
+    // ========== OPTIMIZATION: Prepare bulk operations ==========
+    const bulkOps: AnyBulkWriteOperation<ILead>[] = [];
+
     // Process each unique company group
     for (const [, groupData] of groupedRows) {
         const { company, rows: groupRows, rowNumbers } = groupData;
@@ -881,64 +1050,49 @@ async function importLeadsFromData(
             }
             const uniqueFileContacts = Array.from(uniqueContactsMap.values());
 
-            // Check if lead exists in DB
+            // Use pre-fetched map for O(1) lookup instead of DB query
+            const normalizedName = company.name.toLowerCase().trim();
             const normalizedWebsite = company.website
                 ? company.website
-                      .trim()
                       .toLowerCase()
-                      .replace(/^https?:\/\//, '')
-                      .replace(/^www\./, '')
+                      .replace(/^https?:\/\/(www\.)?/, '')
                       .replace(/\/$/, '')
                 : '';
 
-            const orConditions: FilterQuery<ILead>[] = [
-                {
-                    'company.name': {
-                        $regex: new RegExp(
-                            `^${escapeRegex(company.name)}$`,
-                            'i',
-                        ),
-                    },
-                },
-            ];
-
-            if (normalizedWebsite) {
-                orConditions.push({
-                    'company.website': {
-                        $regex: new RegExp(escapeRegex(normalizedWebsite), 'i'),
-                    },
-                });
-            }
-
-            const existingLead = await LeadModel.findOne({ $or: orConditions });
+            // O(1) lookup from pre-fetched map
+            const existingLead =
+                existingLeadsByName.get(normalizedName) ||
+                (normalizedWebsite
+                    ? existingLeadsByWebsite.get(normalizedWebsite)
+                    : null);
 
             if (existingLead) {
-                // UPDATE EXISTING LEAD
-                let newContactsAdded = 0;
+                // Find new contacts to add (not already in existing lead)
+                const existingEmails = new Set(
+                    existingLead.contactPersons?.map((c) => c.emails?.[0]) ||
+                        [],
+                );
+                const newContacts = uniqueFileContacts.filter(
+                    (c) => c.emails[0] && !existingEmails.has(c.emails[0]),
+                );
 
-                // Merge new contacts if they don't exist
-                for (const newContact of uniqueFileContacts) {
-                    const newEmail = newContact.emails[0];
-                    const existingContact = existingLead.contactPersons.find(
-                        (c) => c.emails[0] === newEmail,
-                    );
-
-                    if (!existingContact) {
-                        existingLead.contactPersons.push(newContact);
-                        newContactsAdded++;
-                    }
-                }
-
-                if (newContactsAdded > 0) {
-                    await existingLead.save();
-                    // This is a MERGE - contacts added to existing lead
+                if (newContacts.length > 0) {
+                    // Queue update operation for bulk write
+                    bulkOps.push({
+                        updateOne: {
+                            filter: { _id: existingLead._id },
+                            update: {
+                                $push: {
+                                    contactPersons: { $each: newContacts },
+                                },
+                                $set: { updatedBy: new Types.ObjectId(userId) },
+                            },
+                        },
+                    });
                     result.merged += groupRows.length;
                 } else {
                     // TRUE DUPLICATE - lead exists and no new contacts to add
                     result.duplicatesInDb += groupRows.length;
-                    const errorMsg = `Rows ${rowNumbers.join(', ')}: Lead already exists for "${company.name}" and no new unique contacts found.`;
-                    result.errors.push(errorMsg);
-                    // Add each row to errorRows for Excel download
                     for (const rowNum of rowNumbers) {
                         const row = groupRows[rowNumbers.indexOf(rowNum)];
                         result.errorRows.push({
@@ -955,10 +1109,9 @@ async function importLeadsFromData(
                             errorMessage: `Lead already exists for "${company.name}" - no new unique contacts`,
                         });
                     }
-                    continue;
                 }
             } else {
-                // CREATE NEW LEAD with combined contacts
+                // Queue insert operation for bulk write
                 const leadData: Partial<ILead> = {
                     company,
                     address: mainRow.address ? String(mainRow.address) : '',
@@ -972,10 +1125,11 @@ async function importLeadsFromData(
                         importedAt,
                         importedBy: new Types.ObjectId(userId),
                         fileName: fileName || undefined,
-                        totalCount: rows.length, // Total in file, not just this group
+                        totalCount: rows.length,
                     },
                     group: groupId ? new Types.ObjectId(groupId) : undefined,
                     owner: new Types.ObjectId(userId),
+                    createdBy: new Types.ObjectId(userId),
                     activities: [
                         {
                             status: 'new',
@@ -986,10 +1140,9 @@ async function importLeadsFromData(
                     ],
                 };
 
-                const newLead = await LeadModel.create(leadData);
-
-                // Removed per-lead logging to prevent timeout on large imports
-
+                bulkOps.push({
+                    insertOne: { document: leadData as ILead },
+                });
                 result.successful += groupRows.length;
             }
         } catch (error) {
@@ -1002,11 +1155,27 @@ async function importLeadsFromData(
         }
     }
 
+    // ========== OPTIMIZATION: Execute all operations in a single bulkWrite ==========
+    if (bulkOps.length > 0) {
+        try {
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < bulkOps.length; i += BATCH_SIZE) {
+                const batch = bulkOps.slice(i, i + BATCH_SIZE);
+                await LeadModel.bulkWrite(batch, { ordered: false });
+            }
+        } catch (error) {
+            console.error('Bulk write error:', error);
+            if (error instanceof Error) {
+                result.errors.push(`Bulk write error: ${error.message}`);
+            }
+        }
+    }
+
     await createLog({
         userId,
         action: 'bulk_import_leads',
         entityType: 'lead',
-        description: `Bulk import completed. Processed ${rows.length} rows. Successful: ${result.successful}, Failed: ${result.failed}`,
+        description: `Bulk import completed. Processed ${rows.length} rows. Successful: ${result.successful}, Merged: ${result.merged}, Duplicates: ${result.duplicatesInDb}`,
         data: result,
     });
 
@@ -1085,6 +1254,9 @@ async function addContactPersonToLead(
     if (!Array.isArray(lead.activities)) lead.activities = [];
     lead.activities.push(activity);
 
+    // Track who updated the lead
+    lead.updatedBy = new Types.ObjectId(userId);
+
     await lead.save();
 
     await createLog({
@@ -1138,6 +1310,9 @@ async function bulkAssignLeads(
 
             if (!Array.isArray(lead.activities)) lead.activities = [];
             lead.activities.push(activity);
+
+            // Track who updated the lead
+            lead.updatedBy = new Types.ObjectId(assignedBy);
 
             await lead.save();
 
@@ -1264,6 +1439,9 @@ async function bulkChangeGroup(
 
             if (!Array.isArray(lead.activities)) lead.activities = [];
             lead.activities.push(activity);
+
+            // Track who updated the lead
+            lead.updatedBy = new Types.ObjectId(changedBy);
 
             await lead.save();
 

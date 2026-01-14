@@ -4,6 +4,8 @@ import {
     getSignedUserFromDB,
     updatePasswordInDB,
     updateUserInDB,
+    updateTablePreferencesInDB,
+    type TablePreferencesPage,
 } from '../services/user.service.js';
 
 export async function getSignedUser(req: Request, res: Response) {
@@ -171,6 +173,64 @@ export async function unlockUserAccountController(req: Request, res: Response) {
         return res.status(500).json({
             success: false,
             message: 'Failed to unlock account',
+            error,
+        });
+    }
+}
+
+// Update user's table column preferences
+export async function updateTablePreferences(req: Request, res: Response) {
+    try {
+        const userId = req.auth?.id;
+        const { page, columns } = req.body as {
+            page: TablePreferencesPage;
+            columns: string[];
+        };
+
+        if (!userId) {
+            return res
+                .status(401)
+                .json({ success: false, message: 'Unauthorized' });
+        }
+
+        // Validate page
+        const validPages: TablePreferencesPage[] = [
+            'leads',
+            'createTask',
+            'schedules',
+            'taskDetails',
+        ];
+        if (!page || !validPages.includes(page)) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    'Invalid page. Must be one of: leads, createTask, schedules, taskDetails',
+            });
+        }
+
+        // Validate columns is an array
+        if (!Array.isArray(columns)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Columns must be an array of strings',
+            });
+        }
+
+        const preferences = await updateTablePreferencesInDB(
+            userId,
+            page,
+            columns,
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Table preferences updated successfully',
+            preferences,
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to update table preferences',
             error,
         });
     }

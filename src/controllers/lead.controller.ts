@@ -423,72 +423,116 @@ async function importLeads(req: Request, res: Response) {
             });
         }
 
-        const file = files[0];
-        if (!file) {
-            return res.status(400).json({
-                success: false,
-                message: 'No file provided',
-            });
-        }
+        // Accumulate results from all files
+        let totalParsedData: ParsedRow[] = [];
+        const allWarnings: string[] = [];
+        const fileNames: string[] = [];
 
-        // Parse the file first
-        let parsedData: ParsedRow[];
+        // Parse all files first
+        for (const file of files) {
+            if (!file) continue;
+            fileNames.push(file.originalname);
 
-        try {
-            if (
-                file.mimetype === 'text/csv' ||
-                file.originalname.endsWith('.csv')
-            ) {
-                parsedData = await parseCSV(file.path);
-            } else if (
-                file.mimetype ===
-                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-                file.originalname.endsWith('.xlsx') ||
-                file.originalname.endsWith('.xls')
-            ) {
-                parsedData = await parseExcel(file.path);
-            } else {
-                return res.status(400).json({
-                    success: false,
-                    message: `Unsupported file type: ${file.originalname}. Please upload a CSV or Excel file.`,
-                });
+            try {
+                let parsedData: ParsedRow[];
+
+                if (
+                    file.mimetype === 'text/csv' ||
+                    file.originalname.endsWith('.csv')
+                ) {
+                    parsedData = await parseCSV(file.path);
+                } else if (
+                    file.mimetype ===
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+                    file.originalname.endsWith('.xlsx') ||
+                    file.originalname.endsWith('.xls')
+                ) {
+                    parsedData = await parseExcel(file.path);
+                } else {
+                    allWarnings.push(
+                        `Skipped unsupported file: ${file.originalname}`,
+                    );
+                    continue;
+                }
+
+                if (parsedData.length === 0) {
+                    allWarnings.push(
+                        `File "${file.originalname}" is empty or contains no data rows.`,
+                    );
+                    continue;
+                }
+
+                // Validate schema for this file
+                const schemaValidation: SchemaValidationResult =
+                    validateImportSchema(parsedData);
+
+                if (!schemaValidation.valid) {
+                    allWarnings.push(
+                        `File "${file.originalname}" has invalid structure: ${schemaValidation.errors?.map((e) => e.message).join(', ')}`,
+                    );
+                    continue;
+                }
+
+                if (schemaValidation.warnings) {
+                    allWarnings.push(
+                        ...schemaValidation.warnings.map(
+                            (w) => `[${file.originalname}] ${w}`,
+                        ),
+                    );
+                }
+
+                // Add file name reference to each row for tracking
+                totalParsedData = [...totalParsedData, ...parsedData];
+            } catch (parseError) {
+                allWarnings.push(
+                    `Error parsing "${file.originalname}": ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
+                );
             }
-        } catch (parseError) {
-            return res.status(400).json({
-                success: false,
-                message: `Error parsing file: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
-            });
         }
 
-        if (parsedData.length === 0) {
+        if (totalParsedData.length === 0) {
+            // Build a more helpful error message
+            let errorMessage =
+                'Could not import leads from the uploaded file(s).';
+
+            if (allWarnings.length > 0) {
+                // Find the most specific error
+                const structureError = allWarnings.find(
+                    (w) =>
+                        w.includes('invalid structure') ||
+                        w.includes('Missing required'),
+                );
+                const emptyError = allWarnings.find((w) => w.includes('empty'));
+                const parseError = allWarnings.find((w) =>
+                    w.includes('Error parsing'),
+                );
+
+                if (structureError) {
+                    errorMessage =
+                        'Invalid file format. Please ensure your file has the required columns: companyName, country, and at least one contact field (contactEmail or contactPhone). Download the template for the correct format.';
+                } else if (parseError) {
+                    errorMessage =
+                        'Could not read the file. Please ensure it is a valid CSV or Excel file and not corrupted.';
+                } else if (emptyError) {
+                    errorMessage =
+                        'The uploaded file is empty or contains no data rows.';
+                }
+            }
+
             return res.status(400).json({
                 success: false,
-                message: 'The file is empty or contains no data rows.',
-            });
-        }
-
-        // Validate schema/columns first
-        const schemaValidation: SchemaValidationResult =
-            validateImportSchema(parsedData);
-
-        if (!schemaValidation.valid) {
-            return res.status(400).json({
-                success: false,
-                message: 'File structure does not match the expected format.',
-                validationErrors: schemaValidation.errors,
-                warnings: schemaValidation.warnings,
-                detectedColumns: schemaValidation.detectedColumns,
-                expectedColumns: schemaValidation.expectedColumns,
+                message: errorMessage,
+                warnings: allWarnings,
             });
         }
 
         // Validate individual rows and collect errors
         const rowErrors: RowValidationError[] = [];
         const validRows: ParsedRow[] = [];
-        const invalidRowIndices = new Set<number>(); // Track unique invalid rows
+        const invalidRowIndices = new Set<number>();
 
-        for (let i = 0; i < parsedData.length; i++) {
-            const row = parsedData[i];
+        for (let i = 0; i < totalParsedData.length; i++) {
+            const row = totalParsedData[i];
             if (!row) continue;
 
             const errors = validateRowData(row, i, {
@@ -497,7 +541,7 @@ async function importLeads(req: Request, res: Response) {
             });
             if (errors.length > 0) {
                 rowErrors.push(...errors);
-                invalidRowIndices.add(i); // Track this row as invalid
+                invalidRowIndices.add(i);
             } else {
                 validRows.push(row);
             }
@@ -508,10 +552,10 @@ async function importLeads(req: Request, res: Response) {
             return res.status(400).json({
                 success: false,
                 message:
-                    'No valid rows found in the file. All rows have validation errors.',
-                rowErrors: rowErrors.slice(0, 50), // Limit to first 50 errors
+                    'No valid rows found in the file(s). All rows have validation errors.',
+                rowErrors: rowErrors.slice(0, 50),
                 totalRowErrors: rowErrors.length,
-                warnings: schemaValidation.warnings,
+                warnings: allWarnings,
             });
         }
 
@@ -519,7 +563,7 @@ async function importLeads(req: Request, res: Response) {
         const importResult = await LeadService.importLeadsFromData(
             validRows,
             userId,
-            file?.originalname,
+            fileNames.join(', '),
             groupId,
         );
 
@@ -531,7 +575,7 @@ async function importLeads(req: Request, res: Response) {
 
         // Combine validation errors into errorRows format
         const validationErrorRows = rowErrors.map((e) => {
-            const row = parsedData[e.row - 2]; // row is 1-indexed + 1 for header
+            const row = totalParsedData[e.row - 2];
             return {
                 rowNumber: e.row,
                 companyName: row?.companyName
@@ -554,24 +598,25 @@ async function importLeads(req: Request, res: Response) {
         ];
 
         // Calculate correct counts
-        const skippedRowCount = invalidRowIndices.size; // Unique invalid rows count
+        const skippedRowCount = invalidRowIndices.size;
 
         res.status(200).json({
             success: true,
-            message: 'Leads import completed',
+            message: `Leads import completed from ${files.length} file(s)`,
             results: {
-                total: parsedData.length,
+                total: totalParsedData.length,
                 validRows: validRows.length,
-                successful: importResult.successful, // New leads created
-                merged: importResult.merged, // Contacts merged into existing leads
-                duplicatesInFile: importResult.duplicatesInFile, // Same company rows in file
-                duplicatesInDb: importResult.duplicatesInDb, // Already existed, no new contacts
-                skippedRows: skippedRowCount, // Validation errors
-                errors: allErrors.slice(0, 100), // Limit errors in response
+                successful: importResult.successful,
+                merged: importResult.merged,
+                duplicatesInFile: importResult.duplicatesInFile,
+                duplicatesInDb: importResult.duplicatesInDb,
+                skippedRows: skippedRowCount,
+                errors: allErrors.slice(0, 100),
                 totalErrors: allErrors.length,
-                errorRows: allErrorRows, // Full error data for Excel download
+                errorRows: allErrorRows,
             },
-            warnings: schemaValidation.warnings,
+            warnings: allWarnings,
+            filesProcessed: fileNames,
         });
     } catch (error) {
         console.error('Error importing leads:', error);

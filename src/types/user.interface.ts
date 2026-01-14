@@ -47,4 +47,12 @@ export interface IUser {
     failedLoginAttempts?: number;
     lockUntil?: Date;
     passwordHistory?: string[];
+
+    // Table column preferences per page
+    tablePreferences?: {
+        leads?: string[];
+        createTask?: string[];
+        schedules?: string[];
+        taskDetails?: string[];
+    };
 }

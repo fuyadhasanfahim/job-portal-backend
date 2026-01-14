@@ -26,7 +26,7 @@ async function createTaskInDB({
     role: string;
 }) {
     const userObjectId = new Types.ObjectId(userId);
-    
+
     // Validate and filter leads - only keep valid ObjectIds
     const formattedLeads = leads
         .filter((id) => id && Types.ObjectId.isValid(id))
@@ -280,6 +280,8 @@ async function getTaskByIdFromDB({
     const leads = await LeadModel.find({ _id: { $in: leadIds } })
         .populate('owner', 'firstName lastName email role')
         .populate('activities.byUser', 'firstName lastName email role')
+        .populate('createdBy', 'firstName lastName')
+        .populate('updatedBy', 'firstName lastName')
         .lean()
         .sort({
             updatedAt: 1,
@@ -532,6 +534,7 @@ async function updateTaskWithLeadInDB({
         lead.activities.push(newActivity);
 
         lead.status = activity.status;
+        lead.updatedBy = new Types.ObjectId(userId); // Track who updated for protected status visibility
     }
 
     await lead.save();
@@ -668,24 +671,22 @@ async function removeLeadFromTaskInDB({
     }
 
     const leadObjectId = new Types.ObjectId(leadId);
-    
+
     // Remove from leads array
-    task.leads = (task.leads || []).filter(
-        (id) => !id.equals(leadObjectId)
-    );
+    task.leads = (task.leads || []).filter((id) => !id.equals(leadObjectId));
 
     // Remove from completedLeads if present
-    const wasInCompleted = (task.completedLeads || []).some(
-        (id) => id.equals(leadObjectId)
+    const wasInCompleted = (task.completedLeads || []).some((id) =>
+        id.equals(leadObjectId),
     );
     task.completedLeads = (task.completedLeads || []).filter(
-        (id) => !id.equals(leadObjectId)
+        (id) => !id.equals(leadObjectId),
     );
 
     // Update metrics
     const newTotal = task.leads.length;
     const newDone = task.completedLeads.length;
-    
+
     task.metrics = {
         done: newDone,
         total: newTotal,
@@ -693,7 +694,10 @@ async function removeLeadFromTaskInDB({
     task.quantity = newTotal;
 
     // Recalculate progress
-    task.progress = newTotal > 0 ? Math.min(100, Math.round((newDone / newTotal) * 100)) : 0;
+    task.progress =
+        newTotal > 0
+            ? Math.min(100, Math.round((newDone / newTotal) * 100))
+            : 0;
 
     // Check if task should be completed now
     if (newTotal > 0 && newDone >= newTotal && task.status !== 'completed') {

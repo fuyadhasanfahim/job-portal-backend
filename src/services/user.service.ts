@@ -113,3 +113,32 @@ export async function updatePasswordInDB(
 
     return user;
 }
+
+export type TablePreferencesPage =
+    | 'leads'
+    | 'createTask'
+    | 'schedules'
+    | 'taskDetails';
+
+export async function updateTablePreferencesInDB(
+    userId: string,
+    page: TablePreferencesPage,
+    columns: string[],
+) {
+    const user = await UserModel.findById(userId);
+
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    // Initialize tablePreferences if it doesn't exist
+    if (!user.tablePreferences) {
+        user.tablePreferences = {};
+    }
+
+    // Update the specific page's column preferences
+    user.tablePreferences[page] = columns;
+    await user.save();
+
+    return user.tablePreferences;
+}

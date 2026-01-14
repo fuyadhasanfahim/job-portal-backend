@@ -64,4 +64,10 @@ export interface ILead extends Document {
 
     owner: Types.ObjectId;
     activities?: IActivity[];
+
+    // Tracking fields
+    createdBy?: Types.ObjectId;
+    updatedBy?: Types.ObjectId;
+    createdAt?: Date;
+    updatedAt?: Date;
 }
